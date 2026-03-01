@@ -3,7 +3,7 @@ mod ollama;
 mod phone;
 mod skills;
 
-use memory::{clear_knowledge_cmd, clear_memories_cmd, delete_knowledge_cmd, delete_memory_cmd, get_knowledge, get_memories};
+use memory::{get_memory_file, set_memory_file};
 use ollama::{chat_ollama, list_models};
 
 /// App entry point — registers Tauri commands and starts the event loop.
@@ -15,12 +15,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             chat_ollama,
             list_models,
-            get_memories,
-            delete_memory_cmd,
-            clear_memories_cmd,
-            get_knowledge,
-            delete_knowledge_cmd,
-            clear_knowledge_cmd,
+            get_memory_file,
+            set_memory_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

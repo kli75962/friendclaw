@@ -6,20 +6,33 @@ compatibility: PhoneClaw (Tauri v2 Android agent)
 
 ## Screen Output Format
 
-`get_screen()` returns the accessibility tree as indented plain text. Each element is prefixed with its role:
+`get_screen()` returns the accessibility tree as indented plain text. Each element is prefixed with its role and suffixed with `@(x,y)` screen coordinates for interactive elements:
 
 | Prefix | Meaning | How to use |
 |--------|---------|------------|
-| `[button] Label` | Tappable element | `tap(description: "Label")` |
-| `[input] Label` | Text field | `tap` to focus → `type_text` |
-| `[on] Label` | Toggle currently ON | `tap(description: "Label")` to turn OFF |
-| `[off] Label` | Toggle currently OFF | `tap(description: "Label")` to turn ON |
+| `[button] Label @(x,y)` | Tappable element | `tap(description: "Label")` — or `tap(x, y)` for duplicates |
+| `[input] Label @(x,y)` | Text field | `tap` to focus → `type_text` |
+| `[on] Label @(x,y)` | Toggle currently ON | `tap(description: "Label")` to turn OFF |
+| `[off] Label @(x,y)` | Toggle currently OFF | `tap(description: "Label")` to turn ON |
 | `Label` (no prefix) | Non-interactive text / heading | Read only |
 
 **Always tap using the EXACT label text shown after the prefix.**
-- `[button] Display & touch` → `tap(description: "Display & touch")`
-- `[on] Bluetooth` → `tap(description: "Bluetooth")`
-- `[input] Search settings` → tap it then `type_text`
+- `[button] Display & touch @(540,320)` → `tap(description: "Display & touch")`
+- `[on] Bluetooth @(540,210)` → `tap(description: "Bluetooth")`
+- `[input] Search settings @(540,140)` → tap it then `type_text`
+
+### ⚠️ Duplicate labels — use coordinates
+
+When **two or more `[button]` elements share the same label** (e.g., both say `Install`), **always use `tap(x, y)` with the coordinates of the target element** rather than `tap(description: ...)`. The description tap finds the *first* match, which may be wrong.
+
+**Example — Play Store with multiple "Install" buttons:**
+```
+  rednote
+    [button] Install @(318,178)    ← Rednote's Install
+  X
+    [button] Install @(318,350)    ← X's Install
+```
+→ To install X: `tap(x: 318, y: 350)` — NOT `tap(description: "Install")`
 
 ---
 

@@ -324,14 +324,21 @@ class PhoneControlService : AccessibilityService() {
         ).firstOrNull()?.trim()
 
         if (!label.isNullOrEmpty()) {
+            val isInteractive = node.isClickable || node.isCheckable || node.isEditable
             val role = when {
-                node.isEditable -> "[input]"
-                node.isCheckable -> if (node.isChecked) "[on]"
-                                    else "[off]"
-                node.isClickable -> "[button]"
-                else -> ""
+                node.isEditable   -> "[input]"
+                node.isCheckable  -> if (node.isChecked) "[on]" else "[off]"
+                node.isClickable  -> "[button]"
+                else              -> ""
             }
-            sb.appendLine("$indent$role $label")
+            // Append screen coordinates for every interactive element so the LLM
+            // can disambiguate duplicate labels (e.g. two "Install" buttons).
+            val coords = if (isInteractive) {
+                val bounds = Rect()
+                node.getBoundsInScreen(bounds)
+                if (!bounds.isEmpty) " @(${bounds.centerX()},${bounds.centerY()})" else ""
+            } else ""
+            sb.appendLine("$indent$role $label$coords")
         }
 
         for (i in 0 until node.childCount) {

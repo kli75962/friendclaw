@@ -2,10 +2,7 @@ use futures_util::StreamExt;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 
-use crate::memory::{
-    add_knowledge, add_memories, build_knowledge_prompt, build_memory_prompt,
-    extract_knowledge, extract_memories, load_knowledge, load_memories,
-};
+use crate::memory::{bootstrap_memory, build_core_prompt, execute_memory_write, memory_dir, read_core, run_memory_command};
 use crate::phone::{execute_tool, get_installed_apps, hide_overlay, is_cancelled, show_overlay};
 use crate::skills::{build_skills_prompt, load_tool_schemas};
 
@@ -16,13 +13,9 @@ use super::types::{
 
 const MAX_TOOL_ROUNDS: usize = 200;
 
-/// Build the system prompt by combining general guidelines, skill definitions,
-/// navigation knowledge, user memories, and the list of installed apps.
-async fn build_system_prompt(
-    app: &AppHandle,
-    knowledge_block: &str,
-    memory_block: &str,
-) -> String {
+/// Build the static part of the system prompt (skills + installed apps).
+/// Called once per chat. Core memory is injected separately each round via prepareCall.
+async fn build_base_prompt(app: &AppHandle) -> String {
     let apps = get_installed_apps(app).await;
     let apps_list = if apps.is_empty() {
         "  (no apps found)".to_string()
@@ -33,18 +26,23 @@ async fn build_system_prompt(
             .join("\n")
     };
 
-    let skills_text = build_skills_prompt();
+    format!(
+        "IMPORTANT: Always reply in **Traditional Chinese (繁體中文)**. Never switch to English or Simplified Chinese in your responses.\n\n{skills}\n\n[INSTALLED APPS]\n{apps}",
+        skills = build_skills_prompt(),
+        apps = apps_list,
+    )
+}
 
-    // Build sections, only including non-empty blocks
-    let mut sections = vec![skills_text];
-    if !knowledge_block.is_empty() {
-        sections.push(knowledge_block.to_string());
+/// Assemble the full system prompt for one LLM round.
+/// Re-reads core.md fresh every round so updates made mid-session take effect
+/// immediately on the next call (equivalent to the guide's `prepareCall` hook).
+fn prepare_system(base: &str, core: &str) -> String {
+    let core_block = build_core_prompt(core);
+    if core_block.is_empty() {
+        base.to_string()
+    } else {
+        format!("{core_block}\n\n{base}")
     }
-    if !memory_block.is_empty() {
-        sections.push(memory_block.to_string());
-    }
-    sections.push(format!("[INSTALLED APPS]\n{apps_list}"));
-    sections.join("\n\n")
 }
 
 /// Execute one streaming request to Ollama.
@@ -153,33 +151,15 @@ pub async fn chat_ollama(
 ) -> Result<(), String> {
     let tool_schemas = load_tool_schemas();
 
-    // Load personal preferences and general navigation knowledge
-    let memories  = load_memories(&app);
-    let knowledge = load_knowledge(&app);
-    let memory_block    = build_memory_prompt(&memories);
-    let knowledge_block = build_knowledge_prompt(&knowledge);
-    let system_prompt = build_system_prompt(&app, &knowledge_block, &memory_block).await;
+    // Bootstrap memory files on first run (no-op if they already exist)
+    bootstrap_memory(&app);
 
-    // Extract the user's latest message text for extraction later
-    let user_last_msg = messages
-        .iter()
-        .rev()
-        .find(|m| m.role == "user")
-        .map(|m| m.content.clone())
-        .unwrap_or_default();
+    // Build the static part of the system prompt once (skills + installed apps).
+    // Core memory is re-read fresh every round (“prepareCall” pattern).
+    let base_prompt = build_base_prompt(&app).await;
 
-    // Compact tool call log used to extract navigation knowledge after the session
-    let mut tool_log_lines: Vec<String> = Vec::new();
-
-    // Prepend system message with skills + apps context
-    let system_msg = OllamaMessage {
-        role: "system".to_string(),
-        content: system_prompt,
-        tool_calls: None,
-    };
-    let mut conversation: Vec<OllamaMessage> = std::iter::once(system_msg)
-        .chain(messages.into_iter())
-        .collect();
+    // Conversation history without system message — system is prepended fresh each round.
+    let mut conversation: Vec<OllamaMessage> = messages.into_iter().collect();
 
     // Show overlay indicator above all apps while the agent loop is running
     show_overlay(&app);
@@ -199,7 +179,21 @@ pub async fn chat_ollama(
             .ok();
             return Ok(());
         }
-        let final_msg = match stream_once(&app, &conversation, &tool_schemas, &model).await {
+
+        // ── prepareCall: inject fresh core memory into system prompt every round ──
+        let core = read_core(&app);
+        let system_content = prepare_system(&base_prompt, &core);
+        let system_msg = OllamaMessage {
+            role: "system".to_string(),
+            content: system_content,
+            tool_calls: None,
+        };
+        // Prepend system message just for this round’s request
+        let mut round_messages = Vec::with_capacity(conversation.len() + 1);
+        round_messages.push(system_msg);
+        round_messages.extend(conversation.iter().cloned());
+
+        let final_msg = match stream_once(&app, &round_messages, &tool_schemas, &model).await {
             Ok(msg) => msg,
             Err(e) => {
                 hide_overlay(&app);
@@ -226,27 +220,6 @@ pub async fn chat_ollama(
             _ => {
                 // No tool calls — conversation is done
                 hide_overlay(&app);
-
-                // Extract new user preferences and navigation knowledge in background
-                let extract_model = model.clone();
-                let extract_user  = user_last_msg.clone();
-                let extract_reply = final_msg.content.clone();
-                let extract_app   = app.clone();
-                let tool_log_str  = tool_log_lines.join("\n");
-                tauri::async_runtime::spawn(async move {
-                    // Personal preference memory
-                    let new_memories =
-                        extract_memories(&extract_model, &extract_user, &extract_reply).await;
-                    add_memories(&extract_app, new_memories);
-
-                    // General navigation knowledge (only if tools were actually used)
-                    if !tool_log_str.is_empty() {
-                        let new_knowledge =
-                            extract_knowledge(&extract_model, &extract_user, &tool_log_str).await;
-                        add_knowledge(&extract_app, new_knowledge);
-                    }
-                });
-
                 app.emit(
                     "ollama-stream",
                     StreamPayload {
@@ -267,28 +240,48 @@ pub async fn chat_ollama(
             let tool_name = &call.function.name;
             let tool_args = &call.function.arguments;
 
-            // Notify frontend that a tool is running
             app.emit("agent-status", AgentStatusPayload {
                 message: format!("Running tool: {tool_name}"),
             })
             .ok();
 
-            let result = execute_tool(&app, tool_name, tool_args).await;
+            // ── Intercept `memory` tool calls in Rust — never forward to Kotlin ──
+            let output = if tool_name == "memory" {
+                let cmd     = tool_args.get("command").and_then(Value::as_str).unwrap_or("");
+                let path    = tool_args.get("path").and_then(Value::as_str);
+                let content = tool_args.get("content").and_then(Value::as_str);
+                let mode    = tool_args.get("mode").and_then(Value::as_str);
+                let query   = tool_args.get("query").and_then(Value::as_str);
 
-            // Only record successful tool calls for navigation knowledge extraction
-            if result.success {
-                tool_log_lines.push(format!(
-                    "{}({}) → {}",
-                    tool_name,
-                    tool_args,
-                    result.output.trim(),
-                ));
-            }
+                if cmd == "create" || cmd == "update" {
+                    // Fire-and-forget: write in background so the LLM loop never waits on disk I/O
+                    let dir      = memory_dir(&app);
+                    let cmd_s    = cmd.to_string();
+                    let path_s   = path.map(String::from);
+                    let content_s = content.map(String::from);
+                    let mode_s   = mode.map(String::from);
+                    tokio::spawn(async move {
+                        let _ = execute_memory_write(
+                            dir,
+                            &cmd_s,
+                            path_s.as_deref(),
+                            content_s.as_deref(),
+                            mode_s.as_deref(),
+                        );
+                    });
+                    "ok: memory saved".to_string()
+                } else {
+                    // view / search need the result synchronously
+                    run_memory_command(&app, cmd, path, content, mode, query)
+                }
+            } else {
+                let result = execute_tool(&app, tool_name, tool_args).await;
+                result.output
+            };
 
-            // Append tool result as a "tool" role message
             conversation.push(OllamaMessage {
                 role: "tool".to_string(),
-                content: result.output,
+                content: output,
                 tool_calls: None,
             });
         }

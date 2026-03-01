@@ -1,19 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
-import { ArrowLeft, BookOpen, Brain, ChevronDown, Check, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { ArrowLeft, ChevronDown, Check, Save } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 
-interface Memory {
-  id: string;
-  content: string;
-  created_at: number;
-}
+// ── Types ───────────────────────────────────────────────────────────────────────────────
 
-/** General phone navigation knowledge shared across all users. */
-interface NavKnowledge {
-  id: string;
-  content: string;
-  created_at: number;
-}
+type MemoryFile = 'core.md' | 'notes.md' | 'conversations.jsonl';
 
 interface SettingsScreenProps {
   model: string;
@@ -22,40 +13,59 @@ interface SettingsScreenProps {
   onBack: () => void;
 }
 
+// ── Memory file tab config ─────────────────────────────────────────────────────────
+
+const MEMORY_TABS: { file: MemoryFile; label: string; desc: string }[] = [
+  {
+    file: 'core.md',
+    label: 'Core',
+    desc: 'Injected into every prompt — keep short. User preferences, name, language.',
+  },
+  {
+    file: 'notes.md',
+    label: 'Notes',
+    desc: 'Detailed knowledge: UI navigation paths, timestamped observations.',
+  },
+  {
+    file: 'conversations.jsonl',
+    label: 'Recall',
+    desc: 'Full conversation history (JSONL). Used by the LLM to search past sessions.',
+  },
+];
+
 /** Full-screen settings page styled like a native mobile settings app. */
 export function SettingsScreen({ model, availableModels, onModelChange, onBack }: SettingsScreenProps) {
   const [modelOpen, setModelOpen] = useState(false);
-  const [memories, setMemories] = useState<Memory[]>([]);
-  const [knowledge, setKnowledge] = useState<NavKnowledge[]>([]);
 
-  // Load memories and navigation knowledge when the settings screen opens
+  // Memory tab state
+  const [activeTab, setActiveTab] = useState<MemoryFile>('core.md');
+  const [fileContent, setFileContent] = useState('');
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load file content when tab changes
   useEffect(() => {
-    invoke<Memory[]>('get_memories')
-      .then(setMemories)
-      .catch(() => setMemories([]));
-    invoke<NavKnowledge[]>('get_knowledge')
-      .then(setKnowledge)
-      .catch(() => setKnowledge([]));
-  }, []);
+    setDirty(false);
+    setSaveMsg('');
+    invoke<string>('get_memory_file', { filename: activeTab })
+      .then((content) => setFileContent(content))
+      .catch(() => setFileContent(''));
+  }, [activeTab]);
 
-  async function deleteMemory(id: string) {
-    await invoke('delete_memory_cmd', { id });
-    setMemories((prev) => prev.filter((m) => m.id !== id));
-  }
-
-  async function clearAllMemories() {
-    await invoke('clear_memories_cmd');
-    setMemories([]);
-  }
-
-  async function deleteKnowledge(id: string) {
-    await invoke('delete_knowledge_cmd', { id });
-    setKnowledge((prev) => prev.filter((k) => k.id !== id));
-  }
-
-  async function clearAllKnowledge() {
-    await invoke('clear_knowledge_cmd');
-    setKnowledge([]);
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await invoke('set_memory_file', { filename: activeTab, content: fileContent });
+      setDirty(false);
+      setSaveMsg('Saved');
+      setTimeout(() => setSaveMsg(''), 2000);
+    } catch {
+      setSaveMsg('Error saving');
+    } finally {
+      setSaving(false);
+    }
   }
 
   return (
@@ -81,7 +91,6 @@ export function SettingsScreen({ model, availableModels, onModelChange, onBack }
           </p>
 
           <div className="bg-[#1E1F20] border-y border-[#2C2C2C]">
-            {/* Row: current model — tap to open dropdown */}
             <button
               onClick={() => setModelOpen((v) => !v)}
               className="w-full flex items-center justify-between px-5 py-4 text-sm hover:bg-[#252526] transition-colors"
@@ -96,7 +105,6 @@ export function SettingsScreen({ model, availableModels, onModelChange, onBack }
               </span>
             </button>
 
-            {/* Expanded model list */}
             {modelOpen && (
               <>
                 <div className="border-t border-[#2C2C2C]" />
@@ -113,9 +121,7 @@ export function SettingsScreen({ model, availableModels, onModelChange, onBack }
                         i < availableModels.length - 1 ? 'border-b border-[#2C2C2C]' : ''
                       }`}
                     >
-                      <span className={m === model ? 'text-purple-400' : 'text-gray-300'}>
-                        {m}
-                      </span>
+                      <span className={m === model ? 'text-purple-400' : 'text-gray-300'}>{m}</span>
                       {m === model && <Check size={14} className="text-purple-400 shrink-0" />}
                     </button>
                   ))
@@ -129,101 +135,65 @@ export function SettingsScreen({ model, availableModels, onModelChange, onBack }
           </p>
         </div>
 
-        {/* Section: Navigation Knowledge */}
-        <div className="mt-6">
-          <div className="flex items-center justify-between px-5 pb-2">
-            <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest">
-              Navigation Knowledge
-            </p>
-            {knowledge.length > 0 && (
-              <button
-                onClick={clearAllKnowledge}
-                className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 transition-colors"
-              >
-                <Trash2 size={12} />
-                Clear all
-              </button>
-            )}
-          </div>
-
-          <div className="bg-[#1E1F20] border-y border-[#2C2C2C]">
-            {knowledge.length === 0 ? (
-              <div className="flex flex-col items-center gap-2 py-8 text-gray-600">
-                <BookOpen size={24} />
-                <p className="text-sm">No navigation knowledge saved yet</p>
-              </div>
-            ) : (
-              knowledge.map((kn, i) => (
-                <div
-                  key={kn.id}
-                  className={`flex items-start justify-between gap-3 px-5 py-3.5 ${
-                    i < knowledge.length - 1 ? 'border-b border-[#2C2C2C]' : ''
-                  }`}
-                >
-                  <p className="text-sm text-gray-300 flex-1 leading-snug font-mono text-xs">{kn.content}</p>
-                  <button
-                    onClick={() => deleteKnowledge(kn.id)}
-                    className="mt-0.5 shrink-0 text-gray-600 hover:text-red-400 transition-colors"
-                    aria-label="Delete knowledge"
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                </div>
-              ))
-            )}
-          </div>
-
-          <p className="px-5 pt-2 text-xs text-gray-600">
-            UI navigation paths learned automatically — shared across all users.
-          </p>
-        </div>
-
         {/* Section: Memory */}
-        <div className="mt-6 mb-8">
+        <div className="mt-6 mb-8 flex flex-col">
+          {/* Header row */}
           <div className="flex items-center justify-between px-5 pb-2">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-widest">
               Memory
             </p>
-            {memories.length > 0 && (
+            {dirty && (
               <button
-                onClick={clearAllMemories}
-                className="flex items-center gap-1 text-xs text-red-400 hover:text-red-300 transition-colors"
+                onClick={handleSave}
+                disabled={saving}
+                className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors disabled:opacity-50"
               >
-                <Trash2 size={12} />
-                Clear all
+                <Save size={12} />
+                {saving ? 'Saving…' : 'Save'}
               </button>
+            )}
+            {saveMsg && !dirty && (
+              <span className="text-xs text-green-400">{saveMsg}</span>
             )}
           </div>
 
-          <div className="bg-[#1E1F20] border-y border-[#2C2C2C]">
-            {memories.length === 0 ? (
-              <div className="flex flex-col items-center gap-2 py-8 text-gray-600">
-                <Brain size={24} />
-                <p className="text-sm">No memories saved yet</p>
-              </div>
-            ) : (
-              memories.map((mem, i) => (
-                <div
-                  key={mem.id}
-                  className={`flex items-start justify-between gap-3 px-5 py-3.5 ${
-                    i < memories.length - 1 ? 'border-b border-[#2C2C2C]' : ''
-                  }`}
-                >
-                  <p className="text-sm text-gray-300 flex-1 leading-snug">{mem.content}</p>
-                  <button
-                    onClick={() => deleteMemory(mem.id)}
-                    className="mt-0.5 shrink-0 text-gray-600 hover:text-red-400 transition-colors"
-                    aria-label="Delete memory"
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                </div>
-              ))
-            )}
+          {/* Tab bar */}
+          <div className="flex border-b border-[#2C2C2C] bg-[#1E1F20]">
+            {MEMORY_TABS.map(({ file, label }) => (
+              <button
+                key={file}
+                onClick={() => setActiveTab(file)}
+                className={`px-4 py-2.5 text-xs font-medium border-b-2 transition-colors ${
+                  activeTab === file
+                    ? 'border-purple-500 text-purple-400'
+                    : 'border-transparent text-gray-500 hover:text-gray-300'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {/* Description */}
+          <p className="px-5 py-2 text-xs text-gray-600">
+            {MEMORY_TABS.find((t) => t.file === activeTab)?.desc}
+          </p>
+
+          {/* Editable textarea */}
+          <div className="px-5">
+            <textarea
+              ref={textareaRef}
+              value={fileContent}
+              onChange={(e) => { setFileContent(e.target.value); setDirty(true); setSaveMsg(''); }}
+              className="w-full h-64 bg-[#1A1A1B] border border-[#2C2C2C] rounded-lg px-4 py-3 text-xs font-mono text-gray-300 focus:outline-none focus:border-[#444] resize-none leading-relaxed"
+              spellCheck={false}
+              placeholder={`No content in ${activeTab}`}
+            />
           </div>
 
           <p className="px-5 pt-2 text-xs text-gray-600">
-            Preferences extracted automatically from your conversations.
+            The LLM can read and write these files using the{' '}
+            <span className="font-mono text-gray-500">memory</span> tool during any conversation.
           </p>
         </div>
 
