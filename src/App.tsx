@@ -8,14 +8,22 @@ import { InputBar } from './components/InputBar';
 import { SettingsScreen } from './components/SettingsScreen';
 
 const DEFAULT_MODEL = 'kimi-k2.5:cloud';
+const MODEL_STORAGE_KEY = 'phoneclaw_model';
 
 function App() {
   const [input, setInput] = useState('');
-  const [model, setModel] = useState(DEFAULT_MODEL);
+  const [model, setModel] = useState(
+    () => localStorage.getItem(MODEL_STORAGE_KEY) ?? DEFAULT_MODEL
+  );
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [showSettings, setShowSettings] = useState(false);
   const { messages, isThinking, agentStatus, error, handleSend } = useOllamaChat(model);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  function handleModelChange(m: string) {
+    setModel(m);
+    localStorage.setItem(MODEL_STORAGE_KEY, m);
+  }
 
   // Fetch available Ollama models on first load
   useEffect(() => {
@@ -23,9 +31,12 @@ function App() {
       .then((models) => {
         const names = models.map((m) => m.name);
         setAvailableModels(names);
-        // Auto-select first model if default is not available
-        if (names.length > 0 && !names.includes(DEFAULT_MODEL)) {
-          setModel(names[0]);
+        // Auto-select first model if saved/default model is not available
+        const saved = localStorage.getItem(MODEL_STORAGE_KEY);
+        if (names.length > 0 && saved && !names.includes(saved)) {
+          handleModelChange(names[0]);
+        } else if (names.length > 0 && !saved && !names.includes(DEFAULT_MODEL)) {
+          handleModelChange(names[0]);
         }
       })
       .catch(() => {
@@ -47,7 +58,7 @@ function App() {
       <SettingsScreen
         model={model}
         availableModels={availableModels}
-        onModelChange={setModel}
+        onModelChange={handleModelChange}
         onBack={() => setShowSettings(false)}
       />
     );

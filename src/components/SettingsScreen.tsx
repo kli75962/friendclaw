@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 
 // ── Types ───────────────────────────────────────────────────────────────────────────────
 
-type MemoryFile = 'core.md' | 'notes.md' | 'conversations.jsonl';
+type MemoryFile = 'core.md' | 'conversations.jsonl';
 
 interface SettingsScreenProps {
   model: string;
@@ -22,14 +22,9 @@ const MEMORY_TABS: { file: MemoryFile; label: string; desc: string }[] = [
     desc: 'Injected into every prompt — keep short. User preferences, name, language.',
   },
   {
-    file: 'notes.md',
-    label: 'Notes',
-    desc: 'Detailed knowledge: UI navigation paths, timestamped observations.',
-  },
-  {
     file: 'conversations.jsonl',
     label: 'Recall',
-    desc: 'Full conversation history (JSONL). Used by the LLM to search past sessions.',
+    desc: 'Last 50 conversation summaries (JSONL). Used by the LLM to search past sessions.',
   },
 ];
 

@@ -1,25 +1,18 @@
 use std::io::Write;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
 // ── Memory file names ────────────────────────────────────────────────────────
 
 pub const CORE_FILE: &str = "core.md";
-pub const NOTES_FILE: &str = "notes.md";
 pub const CONVERSATIONS_FILE: &str = "conversations.jsonl";
-pub const ALLOWED_FILES: &[&str] = &[CORE_FILE, NOTES_FILE, CONVERSATIONS_FILE];
+pub const ALLOWED_FILES: &[&str] = &[CORE_FILE, CONVERSATIONS_FILE];
 
 const DEFAULT_CORE: &str = "\
 # Core Memory
-- Language: always reply in **Traditional Chinese (繁體中文)**.
 - Keep this file short.
 - Write stable user facts here (name, recurring goals, preferences).
-";
-
-const DEFAULT_NOTES: &str = "\
-# Notes
-Use this file for detailed knowledge, UI navigation paths, and timestamped observations.
-Format navigation paths as: \"To [action]: App > Screen > Element\"
 ";
 
 // ── Filesystem helpers ───────────────────────────────────────────────────────
@@ -47,7 +40,6 @@ pub fn bootstrap_memory(app: &AppHandle) {
     let dir = memory_dir(app);
     let _ = std::fs::create_dir_all(&dir);
     ensure_file(&dir.join(CORE_FILE), DEFAULT_CORE);
-    ensure_file(&dir.join(NOTES_FILE), DEFAULT_NOTES);
     ensure_file(&dir.join(CONVERSATIONS_FILE), "");
 }
 
@@ -62,12 +54,6 @@ fn ensure_file(path: &PathBuf, default: &str) {
 /// Read `core.md`.  Returns an empty string if the file is missing.
 pub fn read_core(app: &AppHandle) -> String {
     std::fs::read_to_string(memory_dir(app).join(CORE_FILE)).unwrap_or_default()
-}
-
-/// Read `notes.md`.  Returns an empty string if the file is missing.
-#[allow(dead_code)]
-pub fn read_notes(app: &AppHandle) -> String {
-    std::fs::read_to_string(memory_dir(app).join(NOTES_FILE)).unwrap_or_default()
 }
 
 /// Read any allowed memory file by name.
@@ -200,6 +186,72 @@ pub fn run_memory_command(
 
         other => format!("error: unknown memory command '{other}'"),
     }
+}
+
+/// Append one conversation summary entry to `conversations.jsonl` and keep only
+/// the last 50. Designed to be called from `tokio::spawn` (takes owned `dir`).
+pub fn append_conversation(dir: PathBuf, user_msg: String, reply: String) {
+    const MAX_CONVS: usize = 50;
+
+    let path = dir.join(CONVERSATIONS_FILE);
+    let existing = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut lines: Vec<String> = existing
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(String::from)
+        .collect();
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    // Truncate by char count to safely handle CJK characters
+    let user_trunc: String = user_msg.chars().take(300).collect();
+    let reply_trunc: String = reply.chars().take(500).collect();
+
+    let entry = serde_json::json!({
+        "ts": ts,
+        "user": user_trunc,
+        "reply": reply_trunc,
+    });
+    lines.push(entry.to_string());
+
+    // Keep only the last MAX_CONVS entries
+    let start = lines.len().saturating_sub(MAX_CONVS);
+    let output = lines[start..].join("\n") + "\n";
+    let _ = std::fs::write(&path, output);
+}
+
+/// Read the last `limit` conversation entries formatted for system prompt injection.
+pub fn read_recent_conversations(app: &AppHandle, limit: usize) -> String {
+    let path = memory_dir(app).join(CONVERSATIONS_FILE);
+    let content = std::fs::read_to_string(&path).unwrap_or_default();
+
+    let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+    let recent_start = lines.len().saturating_sub(limit);
+    let recent = &lines[recent_start..];
+
+    if recent.is_empty() {
+        return String::new();
+    }
+
+    let parts: Vec<String> = recent
+        .iter()
+        .filter_map(|line| {
+            let val = serde_json::from_str::<serde_json::Value>(line).ok()?;
+            let user = val["user"].as_str().unwrap_or("");
+            let reply = val["reply"].as_str().unwrap_or("");
+            if user.is_empty() { return None; }
+            Some(format!("User: {user}\nAssistant: {reply}"))
+        })
+        .collect();
+
+    if parts.is_empty() {
+        return String::new();
+    }
+
+    format!("[RECENT CONVERSATIONS — use for context if relevant]\n{}", parts.join("\n---\n"))
 }
 
 // ── System-prompt helpers ────────────────────────────────────────────────────

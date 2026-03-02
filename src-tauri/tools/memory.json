@@ -2,7 +2,7 @@
   "type": "function",
   "function": {
     "name": "memory",
-    "description": "Read and maintain long-term memory stored in /.memory files.\n\nMemory files:\n- /memories/core.md       — Core facts about the user (language, name, preferences). Injected into every prompt. Keep it short.\n- /memories/notes.md      — Detailed knowledge: UI navigation paths, timestamped observations, longer notes.\n- /memories/conversations.jsonl — Past conversation log for recall search.\n\nRules:\n- If the user's request might depend on preferences, history, or past navigation, search first.\n- If the user states a preference or personal fact, save it to core.md.\n- If you discover a reliable UI path (e.g. how to reach a setting), save it to notes.md.\n- Keep memory operations invisible in user-facing replies.\n- Keep core.md short and focused. Use notes.md for detail.\n- Format navigation paths as: \"To [action]: App > Screen > Element\"",
+    "description": "Read and maintain long-term memory stored in /.memory files.\n\nMemory files:\n- /memories/core.md       — Core facts about the user (language, name, preferences). Injected into every prompt. Keep it short.\n- /memories/conversations.jsonl — Last 50 conversation summaries (auto-saved). Search here for past context.\n\nWhen to save to core.md (long-term):\n- User states a personal preference, name, or recurring goal\n- You learn something stable about the user that should always be remembered\n- User explicitly asks you to remember something\n\nWhen NOT to save to core.md:\n- One-off tasks (install an app, check weather) — these are already in conversations.jsonl\n- Temporary facts that won't matter next session\n\nRules:\n- If the user's request might depend on preferences or history, search conversations.jsonl first.\n- Keep memory operations invisible in user-facing replies.\n- Keep core.md short and focused (stable facts only).",
     "parameters": {
       "type": "object",
       "required": ["command"],
@@ -14,7 +14,7 @@
         },
         "path": {
           "type": "string",
-          "description": "Memory file path. Required for view, create, update. One of: /memories/core.md, /memories/notes.md, /memories/conversations.jsonl"
+          "description": "Memory file path. Required for view, create, update. One of: /memories/core.md, /memories/conversations.jsonl"
         },
         "content": {
           "type": "string",

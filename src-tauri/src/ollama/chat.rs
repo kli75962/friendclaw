@@ -2,7 +2,7 @@ use futures_util::StreamExt;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter};
 
-use crate::memory::{bootstrap_memory, build_core_prompt, execute_memory_write, memory_dir, read_core, run_memory_command};
+use crate::memory::{append_conversation, bootstrap_memory, build_core_prompt, execute_memory_write, memory_dir, read_core, read_recent_conversations, run_memory_command};
 use crate::phone::{execute_tool, get_installed_apps, hide_overlay, is_cancelled, show_overlay};
 use crate::skills::{build_skills_prompt, load_tool_schemas};
 
@@ -83,6 +83,10 @@ async fn stream_once(
     let mut final_role = "assistant".to_string();
 
     while let Some(chunk_result) = byte_stream.next().await {
+        // Check cancel button on every chunk so the overlay responds immediately
+        if is_cancelled(app) {
+            return Err("CANCELLED".to_string());
+        }
         let bytes = chunk_result.map_err(|e| format!("Stream error: {e}"))?;
         let text = String::from_utf8_lossy(&bytes);
 
@@ -156,7 +160,11 @@ pub async fn chat_ollama(
 
     // Build the static part of the system prompt once (skills + installed apps).
     // Core memory is re-read fresh every round (“prepareCall” pattern).
-    let base_prompt = build_base_prompt(&app).await;
+    let base_prompt = {
+        let prompt = build_base_prompt(&app).await;
+        let recent = read_recent_conversations(&app, 5);
+        if recent.is_empty() { prompt } else { format!("{prompt}\n\n{recent}") }
+    };
 
     // Conversation history without system message — system is prepended fresh each round.
     let mut conversation: Vec<OllamaMessage> = messages.into_iter().collect();
@@ -195,6 +203,18 @@ pub async fn chat_ollama(
 
         let final_msg = match stream_once(&app, &round_messages, &tool_schemas, &model).await {
             Ok(msg) => msg,
+            Err(e) if e == "CANCELLED" => {
+                hide_overlay(&app);
+                app.emit(
+                    "ollama-stream",
+                    StreamPayload {
+                        content: "\n\n[Cancelled by user]".to_string(),
+                        done: true,
+                    },
+                )
+                .ok();
+                return Ok(());
+            }
             Err(e) => {
                 hide_overlay(&app);
                 return Err(e);
@@ -228,6 +248,18 @@ pub async fn chat_ollama(
                     },
                 )
                 .map_err(|e| e.to_string())?;
+
+                // Append conversation summary in background (fire-and-forget)
+                let user_msg = conversation.iter()
+                    .find(|m| m.role == "user")
+                    .map(|m| m.content.chars().take(300).collect::<String>())
+                    .unwrap_or_default();
+                let reply_text = final_msg.content.chars().take(500).collect::<String>();
+                let conv_dir = memory_dir(&app);
+                tokio::spawn(async move {
+                    append_conversation(conv_dir, user_msg, reply_text);
+                });
+
                 return Ok(());
             }
         };

@@ -1,282 +1,82 @@
+````skill
 ---
 name: navigate
-description: How to read get_screen output, interact with UI elements (tap, type, scroll, toggle), and navigate through any app to find and operate a target. Use whenever the task involves opening an app, searching within it, or changing a setting.
+description: Read get_screen output and interact with UI elements to navigate any Android app.
 compatibility: PhoneClaw (Tauri v2 Android agent)
 ---
 
 ## Screen Output Format
 
-`get_screen()` returns the accessibility tree as indented plain text. Each element is prefixed with its role and suffixed with `@(x,y)` screen coordinates for interactive elements:
+`get_screen()` returns an accessibility tree. Interactive elements include `@(x,y)` coordinates.
 
-| Prefix | Meaning | How to use |
-|--------|---------|------------|
-| `[button] Label @(x,y)` | Tappable element | `tap(description: "Label")` — or `tap(x, y)` for duplicates |
-| `[input] Label @(x,y)` | Text field | `tap` to focus → `type_text` |
-| `[on] Label @(x,y)` | Toggle currently ON | `tap(description: "Label")` to turn OFF |
-| `[off] Label @(x,y)` | Toggle currently OFF | `tap(description: "Label")` to turn ON |
-| `Label` (no prefix) | Non-interactive text / heading | Read only |
+| Prefix | Action |
+|--------|--------|
+| `[button] Label @(x,y)` | `tap(description: "Label")` |
+| `[input] Label @(x,y)` | `tap` to focus → `type_text` |
+| `[on] Label` | Tap to turn OFF |
+| `[off] Label` | Tap to turn ON |
+| `Label` (no prefix) | Read-only text |
 
-**Always tap using the EXACT label text shown after the prefix.**
-- `[button] Display & touch @(540,320)` → `tap(description: "Display & touch")`
-- `[on] Bluetooth @(540,210)` → `tap(description: "Bluetooth")`
-- `[input] Search settings @(540,140)` → tap it then `type_text`
-
-### ⚠️ Duplicate labels — use coordinates
-
-When **two or more `[button]` elements share the same label** (e.g., both say `Install`), **always use `tap(x, y)` with the coordinates of the target element** rather than `tap(description: ...)`. The description tap finds the *first* match, which may be wrong.
-
-**Example — Play Store with multiple "Install" buttons:**
-```
-  rednote
-    [button] Install @(318,178)    ← Rednote's Install
-  X
-    [button] Install @(318,350)    ← X's Install
-```
-→ To install X: `tap(x: 318, y: 350)` — NOT `tap(description: "Install")`
+Always call `get_screen` **before and after** every interaction. Never assume success without verifying.
 
 ---
 
-## Analyzing get_screen — Decision Priority
+## ⚠️ Duplicate Button Labels — ALWAYS Use Coordinates
 
-After every `get_screen`, evaluate in this order:
+**NEVER use `tap(description: ...)` when the same label appears more than once on screen.**
+`tap(description: ...)` always taps the FIRST match — which is almost always the WRONG one.
 
-**1. Direct match** — is there a `[button]` / `[on]` / `[off]` whose label matches the goal?
-→ Tap it immediately.
+**Rule: Before tapping any button, scan ALL elements on screen for duplicate labels.**
+If duplicates exist → identify which entry belongs to the target app/item by reading the text directly ABOVE the button in the tree → use `tap(x, y)` with that button's exact coordinates.
 
-**2. Search bar** — is there an `[input]` labeled `Search`, `Find`, `Filter`, or `type URL`?
-→ Tap it → `type_text(keyword)` → `press_key(enter)` → `get_screen`.
-→ **Always prefer this over scrolling.**
-
-**3. Fuzzy match** — any `[button]` with a related word / synonym / parent category?
-→ Examples: "bluetooth" → `Connected devices` / "dark mode" → `Display & touch` / "volume" → `Sound`
-→ Tap the best match → **immediately call `get_screen` on the new screen** → re-run this decision loop from step 1.
-→ **Do NOT stop here.** Entering a sub-screen is a navigation step, not the goal.
-
-**4. Scroll** — nothing matched on current screen.
-→ `swipe(direction: "up")` → `get_screen` → repeat up to 3 times.
-
-**5. Backtrack** — reached bottom with no match.
-→ `press_key(key: "back")` → `get_screen` → re-analyze from parent screen (up to 3 levels).
-
-**6. Give up** — exhausted all paths.
-→ Report to user what `[button]` sections ARE visible.
-
-> **The loop only ends when:**
-> - A toggle `[on]`/`[off]` state is confirmed changed, OR
-> - An input was submitted and results are visible, OR
-> - An action is confirmed via `get_screen` and reported to the user.
+Example — Play Store, two "Install" buttons:
+```
+rednote                          ← NOT the target
+  [button] Install @(318,178)    ← WRONG button (first match)
+Instagram                        ← target app
+  [button] Install @(318,350)    ← CORRECT button
+```
+→ Task: install Instagram → `tap(x: 318, y: 350)` — NEVER `tap(description: "Install")`
 
 ---
 
-## Tool Execution Order
+## Popup / Dialog — Dismiss First
 
-```
-launch_app(package_name)          ← open target app
-get_screen()                      ← confirm app open, read UI
-tap / type_text / swipe           ← interact
-press_key                         ← navigate (back / home / enter)
-get_screen()                      ← verify result
-```
+If a popup blocks the screen, dismiss it before doing anything else. Tap the first matching button:
 
-Always call `get_screen` **before and after** every tap or type_text.
-Never assume a step succeeded without verifying.
+1. **Accept** (informational): `Got it` · `OK` · `Accept` · `Agree` · `Continue` · `Confirm` · `Done`
+2. **Decline** (optional prompts): `Not now` · `Skip` · `Later` · `No thanks` · `Dismiss` · `Close`
+3. **Destructive** (`Delete` · `Remove`): only if the user's task requires it
+
+After dismissing, call `get_screen` again. Repeat until the main UI is visible.
 
 ---
 
-## Example A — Open app and search within it
+## Decision Loop (run after every get_screen)
 
-User: "open YouTube and search cat"
+1. **Popup?** → Dismiss (see above) → `get_screen` → restart loop
+2. **Duplicate labels?** → Use `tap(x, y)` with the correct item's coordinates (see above)
+3. **Direct match** `[button]`/`[on]`/`[off]` (unique) → `tap(description: "Label")`
+4. **Search bar** `[input]` → tap → `type_text(keyword)` → `press_key(enter)` → `get_screen` *(prefer over scrolling)*
+5. **Fuzzy match** — related word / parent category → tap → `get_screen` → re-run loop
+6. **Scroll** — `swipe(direction: "up")` → `get_screen`, up to 3 times
+7. **Backtrack** — `press_key(key: "back")` → `get_screen`, up to 3 levels
+8. **Give up** — report visible `[button]` sections to user
 
-```
-tool: launch_app(package_name: "com.google.android.youtube")
-result: "App launched."
-
-tool: get_screen()
-result:
-  [button] Home
-  [button] Search
-  [button] Shorts
-// [button] Search is visible → tap it.
-
-tool: tap(description: "Search")
-result: "Tap performed."
-
-tool: get_screen()
-result:
-  [input] Search YouTube
-  [button] Cancel
-// [input] focused → type the query.
-
-tool: type_text(text: "cat")
-result: "Text typed."
-
-tool: press_key(key: "enter")
-result: "Key pressed."
-
-tool: get_screen()
-result:
-  [button] Cute Cats Compilation  10M views
-  [button] Funny Cats 2024  5M views
-// Results confirmed.
-
-Final reply: "Search results for 'cat' are now showing on YouTube."
-```
+Loop ends only when: toggle state confirmed · input submitted and results visible · action verified via `get_screen`.
 
 ---
 
-## Example B — Navigate settings through a sub-screen to find a toggle
-
-User: "turn off dark mode"
+## Tool Order
 
 ```
-tool: launch_app(package_name: "com.android.settings")
-result: "App launched."
-
-tool: get_screen()
-result:
-  Settings
-  [input] Search settings
-  [button] Network & internet
-  [button] Connected devices
-  [button] Display & touch        ← fuzzy match for "dark mode"
-  [button] Sound
-// No direct match. [input] Search exists — use it.
-
-tool: tap(description: "Search settings")
-result: "Tap performed."
-
-tool: type_text(text: "dark mode")
-result: "Text typed."
-
-tool: get_screen()
-result:
-  [button] Dark theme             ← direct match found in results.
-// Tap it.
-
-tool: tap(description: "Dark theme")
-result: "Tap performed."
-
-tool: get_screen()
-result:
-  Display
-  [on] Dark theme                 ← toggle is ON → tap to turn off.
-
-tool: tap(description: "Dark theme")
-result: "Tap performed."
-
-tool: get_screen()
-result:
-  Display
-  [off] Dark theme                ← confirmed OFF. Loop ends here.
-
-Final reply: "Dark mode has been turned off."
+launch_app(package_name)   ← open app
+get_screen()               ← read UI
+tap / type_text / swipe    ← interact
+press_key                  ← back / home / enter
+get_screen()               ← verify
 ```
 
-**If there is no search bar, navigate via fuzzy match sub-screens:**
+Browser priority for web tasks: `com.android.chrome` → `com.brave.browser` → `org.mozilla.firefox` → `com.microsoft.emmx`
 
-```
-tool: get_screen()
-result:
-  Settings
-  [button] Network & internet
-  [button] Connected devices
-  [button] Display & touch        ← fuzzy match. Tap and continue on new screen.
-
-tool: tap(description: "Display & touch")
-result: "Tap performed."
-
-tool: get_screen()                ← MUST call get_screen after every tap.
-result:
-  Display & touch
-  [button] Brightness
-  [button] Colour scheme
-  [on] Dark theme                 ← direct match, toggle is ON.
-// Tap to turn off.
-
-tool: tap(description: "Dark theme")
-result: "Tap performed."
-
-tool: get_screen()
-result:
-  [off] Dark theme                ← confirmed OFF.
-
-Final reply: "Dark mode has been turned off."
-```
-
-```
-tool: launch_app(package_name: "com.android.settings")
-result: "App launched."
-
-tool: get_screen()
-result:
-  Settings
-  [input] Search settings        ← search bar found! use it.
-  [button] Network & internet
-  [button] Connected devices
-
-tool: tap(description: "Search settings")
-result: "Tap performed."
-
-tool: type_text(text: "bluetooth")
-result: "Text typed."
-
-tool: get_screen()
-result:
-  [button] Bluetooth
-  [button] Connected devices
-// tap best match.
-
-tool: tap(description: "Bluetooth")
-result: "Tap performed."
-
-tool: get_screen()
-result:
-  Bluetooth
-  [on] Bluetooth           ← toggle is ON → tap to turn off.
-  [button] Pair new device
-
-tool: tap(description: "Bluetooth")
-result: "Tap performed."
-
-tool: get_screen()
-result:
-  [off] Bluetooth          ← confirmed OFF.
-
-Final reply: "Bluetooth has been turned off."
-```
-
----
-
-## Example C — Web search via browser
-
-User: "google best coffee near me"
-
-```
-// Check [INSTALLED APPS] for a browser in this priority:
-// com.android.chrome → com.brave.browser → org.mozilla.firefox → com.microsoft.emmx
-// If none found → report to user and stop.
-
-tool: launch_app(package_name: "com.android.chrome")
-result: "App launched."
-
-tool: get_screen()
-result:
-  [input] Search or type URL    ← address bar is an [input].
-
-tool: tap(description: "Search or type URL")
-result: "Tap performed."
-
-tool: type_text(text: "best coffee near me")
-result: "Text typed."
-
-tool: press_key(key: "enter")
-result: "Key pressed."
-
-tool: get_screen()
-result:
-  best coffee near me - Google Search
-  [button] Blue Bottle Coffee  4.5★
-  [button] Stumptown Coffee  4.3★
-
-Final reply: "Top results: Blue Bottle Coffee and Stumptown Coffee."
-```
+````
