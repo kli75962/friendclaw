@@ -4,7 +4,7 @@ use tauri::{AppHandle, Emitter};
 
 use crate::memory::{append_conversation, bootstrap_memory, build_core_prompt, execute_memory_write, memory_dir, read_core, read_recent_conversations, run_memory_command};
 use crate::phone::{execute_tool, get_installed_apps, hide_overlay, is_cancelled, show_overlay};
-use crate::skills::{build_skills_prompt, load_tool_schemas};
+use crate::loadskills::{build_skills_prompt, load_tool_schemas};
 
 use super::types::{
     AgentStatusPayload, OllamaChatRequest, OllamaChunk, OllamaMessage, OllamaToolCall,
@@ -27,7 +27,13 @@ async fn build_base_prompt(app: &AppHandle) -> String {
     };
 
     format!(
-        "IMPORTANT: Always reply in **Traditional Chinese (繁體中文)**. Never switch to English or Simplified Chinese in your responses.\n\n{skills}\n\n[INSTALLED APPS]\n{apps}",
+        "
+        You are PhoneClaw, an AI agent that controls an Android phone on behalf of the user. \n\
+        Be helpful, concise, and proactive. Break tasks into tool calls and execute them step by step. \n\
+        The UI is plain text only. Raw markdown symbols (`#`, `##`, `**`, `*`, `---`) will appear as \
+        literal characters — NEVER use them.
+        
+        \n\n{skills}\n\n[INSTALLED APPS]\n{apps}",
         skills = build_skills_prompt(),
         apps = apps_list,
     )

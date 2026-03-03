@@ -23,6 +23,7 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import kotlin.math.cos
 import kotlin.math.sin
 import kotlin.math.sqrt
@@ -179,7 +180,7 @@ class PhoneControlService : AccessibilityService() {
     fun showTapFeedback(x: Float, y: Float) {
         Handler(Looper.getMainLooper()).post {
             val wm = getSystemService(WINDOW_SERVICE) as WindowManager
-            val sizePx = 52.dpToPx()
+            val sizePx = 26.dpToPx()
 
             val ripple = View(this).apply {
                 background = GradientDrawable().apply {
@@ -306,16 +307,52 @@ class PhoneControlService : AccessibilityService() {
     /**
      * Walk the accessibility node tree and return a flat text summary of all
      * visible and interactive elements (label | text | description).
+     * Iterates ALL visible windows (including dialogs/popups) so overlay UI
+     * like "Got it" buttons in Play Store dialogs are captured.
      */
-    fun getScreenContent(): String {
-        val root = rootInActiveWindow ?: return "[screen not accessible]"
+    fun getScreenContent(): String = buildScreenContent(showHiddenAreas = false)
+
+    /**
+     * Like getScreenContent() but also emits [hidden-area] entries for visible
+     * leaf nodes that have no text and no children. Some apps (e.g. Compose
+     * buttons with importantForAccessibility=NO_HIDE_DESCENDANTS) hide their
+     * children from the accessibility tree entirely. Call this when the normal
+     * get_screen result lacks expected buttons and the LLM is stuck.
+     */
+    fun getScreenContentDeep(): String = buildScreenContent(showHiddenAreas = true)
+
+    private fun buildScreenContent(showHiddenAreas: Boolean): String {
         val builder = StringBuilder()
-        collectNodeText(root, builder, depth = 0)
-        root.recycle()
-        return builder.toString().trim().take(4000) // cap to avoid huge prompts
+        val processedWindowIds = mutableSetOf<Int>()
+
+        windows?.forEach { window ->
+            if (window.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) return@forEach
+            val root = window.root ?: return@forEach
+            processedWindowIds.add(window.id)
+            root.refresh()
+            collectNodeText(root, builder, depth = 0, showHiddenAreas = showHiddenAreas)
+            root.recycle()
+        }
+
+        // Fallback: rootInActiveWindow may expose dialog sub-panels not in the windows list.
+        rootInActiveWindow?.let { activeRoot ->
+            if (activeRoot.windowId !in processedWindowIds) {
+                activeRoot.refresh()
+                collectNodeText(activeRoot, builder, depth = 0, showHiddenAreas = showHiddenAreas)
+            }
+            activeRoot.recycle()
+        }
+
+        return if (builder.isEmpty()) "[screen not accessible]"
+               else builder.toString().trim().take(8000)
     }
 
-    private fun collectNodeText(node: AccessibilityNodeInfo, sb: StringBuilder, depth: Int) {
+    private fun collectNodeText(
+        node: AccessibilityNodeInfo,
+        sb: StringBuilder,
+        depth: Int,
+        showHiddenAreas: Boolean,
+    ) {
         val indent = "  ".repeat(depth.coerceAtMost(6))
         val label = listOfNotNull(
             node.text?.toString(),
@@ -323,27 +360,49 @@ class PhoneControlService : AccessibilityService() {
             node.hintText?.toString(),
         ).firstOrNull()?.trim()
 
-        if (!label.isNullOrEmpty()) {
-            val isInteractive = node.isClickable || node.isCheckable || node.isEditable
-            val role = when {
-                node.isEditable   -> "[input]"
-                node.isCheckable  -> if (node.isChecked) "[on]" else "[off]"
-                node.isClickable  -> "[button]"
-                else              -> ""
+        val isInteractive = node.isClickable || node.isCheckable || node.isEditable
+        val bounds = Rect()
+        node.getBoundsInScreen(bounds)
+        val vis = node.isVisibleToUser
+
+        when {
+            !label.isNullOrEmpty() -> {
+                val role = when {
+                    node.isEditable  -> "[input]"
+                    node.isCheckable -> if (node.isChecked) "[on]" else "[off]"
+                    node.isClickable -> "[button]"
+                    else             -> ""
+                }
+                val coords = if (!bounds.isEmpty) " @(${bounds.centerX()},${bounds.centerY()})" else ""
+                sb.appendLine("$indent$role $label$coords")
             }
-            // Append screen coordinates for every interactive element so the LLM
-            // can disambiguate duplicate labels (e.g. two "Install" buttons).
-            val coords = if (isInteractive) {
-                val bounds = Rect()
-                node.getBoundsInScreen(bounds)
-                if (!bounds.isEmpty) " @(${bounds.centerX()},${bounds.centerY()})" else ""
-            } else ""
-            sb.appendLine("$indent$role $label$coords")
+            isInteractive && vis && !bounds.isEmpty -> {
+                // Clickable/editable node with no text — emit with fallback label.
+                val fallback = node.viewIdResourceName?.substringAfterLast('/')
+                    ?: node.className?.toString()?.substringAfterLast('.')
+                    ?: "interactive"
+                val role = when {
+                    node.isEditable  -> "[input]"
+                    node.isCheckable -> if (node.isChecked) "[on]" else "[off]"
+                    node.isClickable -> "[button]"
+                    else             -> ""
+                }
+                sb.appendLine("$indent$role <$fallback> @(${bounds.centerX()},${bounds.centerY()})")
+            }
+            showHiddenAreas && vis && !bounds.isEmpty && node.childCount == 0 -> {
+                // Deep-scan only: visible leaf with no exposed text or interactivity.
+                // Could be a Compose button hidden from the accessibility tree.
+                val w = bounds.width()
+                val h = bounds.height()
+                if (w > 40 && h > 40) {
+                    sb.appendLine("$indent[hidden-area] @(${bounds.centerX()},${bounds.centerY()})")
+                }
+            }
         }
 
         for (i in 0 until node.childCount) {
             node.getChild(i)?.let { child ->
-                collectNodeText(child, sb, depth + 1)
+                collectNodeText(child, sb, depth + 1, showHiddenAreas)
                 child.recycle()
             }
         }

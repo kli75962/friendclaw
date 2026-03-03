@@ -1,7 +1,7 @@
 mod memory;
 mod ollama;
 mod phone;
-mod skills;
+mod loadskills;
 
 use memory::{get_memory_file, set_memory_file};
 use ollama::{chat_ollama, list_models};

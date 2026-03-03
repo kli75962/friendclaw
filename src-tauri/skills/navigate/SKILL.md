@@ -1,4 +1,3 @@
-````skill
 ---
 name: navigate
 description: Read get_screen output and interact with UI elements to navigate any Android app.
@@ -18,10 +17,10 @@ compatibility: PhoneClaw (Tauri v2 Android agent)
 | `Label` (no prefix) | Read-only text |
 
 Always call `get_screen` **before and after** every interaction. Never assume success without verifying.
-
+Only call `get_screen_deep` **when** your get stuck and unable to continue for next step.
 ---
 
-## ⚠️ Duplicate Button Labels — ALWAYS Use Coordinates
+## Duplicate Button Labels — ALWAYS Use Coordinates
 
 **NEVER use `tap(description: ...)` when the same label appears more than once on screen.**
 `tap(description: ...)` always taps the FIRST match — which is almost always the WRONG one.
@@ -37,18 +36,6 @@ Instagram                        ← target app
   [button] Install @(318,350)    ← CORRECT button
 ```
 → Task: install Instagram → `tap(x: 318, y: 350)` — NEVER `tap(description: "Install")`
-
----
-
-## Popup / Dialog — Dismiss First
-
-If a popup blocks the screen, dismiss it before doing anything else. Tap the first matching button:
-
-1. **Accept** (informational): `Got it` · `OK` · `Accept` · `Agree` · `Continue` · `Confirm` · `Done`
-2. **Decline** (optional prompts): `Not now` · `Skip` · `Later` · `No thanks` · `Dismiss` · `Close`
-3. **Destructive** (`Delete` · `Remove`): only if the user's task requires it
-
-After dismissing, call `get_screen` again. Repeat until the main UI is visible.
 
 ---
 

@@ -3,6 +3,7 @@ package com.uty.phoneclaw
 import android.app.Activity
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.util.Log
 import app.tauri.annotation.Command
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
@@ -82,6 +83,16 @@ class PhoneControlPlugin(private val activity: Activity) : Plugin(activity) {
             when (toolName) {
                 "get_screen" -> {
                     val content = service.getScreenContent()
+                    Log.d("PhoneControlPlugin", "Screen content: $content")
+                    resolveToolResult(invoke, toolName, true, content)
+                }
+
+                "get_screen_deep" -> {
+                    // Deep scan: includes [hidden-area] hints for visible leaf nodes
+                    // whose children are hidden from the accessibility tree.
+                    // Use only when get_screen lacks expected buttons and you're stuck.
+                    val content = service.getScreenContentDeep()
+                    Log.d("PhoneControlPlugin", "Screen content (deep): $content")
                     resolveToolResult(invoke, toolName, true, content)
                 }
 

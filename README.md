@@ -16,3 +16,6 @@ For Desktop development, run:
 
 For Android development, run:
   bun run tauri android dev
+
+debug:
+  adb logcat | grep PhoneControlPlugin
