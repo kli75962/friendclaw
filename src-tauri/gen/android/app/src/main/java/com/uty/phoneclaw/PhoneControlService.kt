@@ -44,6 +44,12 @@ class PhoneControlService : AccessibilityService() {
         @Volatile
         var instance: PhoneControlService? = null
             private set
+
+        /**
+         * Pre-built indent strings for depths 0-6.
+         * Avoids allocating a new String via repeat() for every node in the tree.
+         */
+        private val INDENTS = Array(7) { depth -> "  ".repeat(depth) }
     }
 
     // ----- Lifecycle -----
@@ -65,6 +71,9 @@ class PhoneControlService : AccessibilityService() {
 
     private var overlayView: View? = null
     private var overlayParams: WindowManager.LayoutParams? = null
+
+    /** Cached handler for the main thread — reused by tap/swipe feedback. */
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     /**
      * Show a draggable red recording-dot indicator floating above all apps.
@@ -178,9 +187,9 @@ class PhoneControlService : AccessibilityService() {
      * Safe to call from any thread.
      */
     fun showTapFeedback(x: Float, y: Float) {
-        Handler(Looper.getMainLooper()).post {
+        mainHandler.post {
             val wm = getSystemService(WINDOW_SERVICE) as WindowManager
-            val sizePx = 26.dpToPx()
+            val sizePx = 40.dpToPx()
 
             val ripple = View(this).apply {
                 background = GradientDrawable().apply {
@@ -209,7 +218,7 @@ class PhoneControlService : AccessibilityService() {
             try {
                 wm.addView(ripple, params)
                 ObjectAnimator.ofFloat(ripple, View.ALPHA, 0.9f, 0f).apply {
-                    duration = 900
+                    duration = 1000
                     addListener(object : AnimatorListenerAdapter() {
                         override fun onAnimationEnd(animation: Animator) {
                             try { wm.removeView(ripple) } catch (_: Exception) {}
@@ -226,7 +235,7 @@ class PhoneControlService : AccessibilityService() {
      * that fades out in 1 second. Safe to call from any thread.
      */
     fun showSwipeFeedback(startX: Float, startY: Float, endX: Float, endY: Float) {
-        Handler(Looper.getMainLooper()).post {
+        mainHandler.post {
             val wm  = getSystemService(WINDOW_SERVICE) as WindowManager
             val dm  = resources.displayMetrics
             val sw  = dm.widthPixels
@@ -353,12 +362,11 @@ class PhoneControlService : AccessibilityService() {
         depth: Int,
         showHiddenAreas: Boolean,
     ) {
-        val indent = "  ".repeat(depth.coerceAtMost(6))
-        val label = listOfNotNull(
-            node.text?.toString(),
-            node.contentDescription?.toString(),
-            node.hintText?.toString(),
-        ).firstOrNull()?.trim()
+        val indent = INDENTS[depth.coerceAtMost(6)]
+        // Null-safe chain replaces listOfNotNull(...).firstOrNull() — zero allocation.
+        val label = (node.text?.toString()
+            ?: node.contentDescription?.toString()
+            ?: node.hintText?.toString())?.trim()
 
         val isInteractive = node.isClickable || node.isCheckable || node.isEditable
         val bounds = Rect()
@@ -573,10 +581,10 @@ class PhoneControlService : AccessibilityService() {
     }
 
     private fun searchNode(node: AccessibilityNodeInfo, lc: String): AccessibilityNodeInfo? {
-        val matches = listOfNotNull(
-            node.text?.toString(),
-            node.contentDescription?.toString(),
-        ).any { it.lowercase().contains(lc) }
+        // Direct null checks instead of listOfNotNull(...).any{} to avoid List allocation
+        // on every DFS node visit.
+        val matches = node.text?.toString()?.lowercase()?.contains(lc) == true
+            || node.contentDescription?.toString()?.lowercase()?.contains(lc) == true
 
         if (matches) {
             // Return this node if clickable, else climb to a clickable ancestor

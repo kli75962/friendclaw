@@ -18,6 +18,7 @@ compatibility: PhoneClaw (Tauri v2 Android agent)
 
 Always call `get_screen` **before and after** every interaction. Never assume success without verifying.
 Only call `get_screen_deep` **when** your get stuck and unable to continue for next step.
+**Output plain text only. NEVER use raw markdown symbols (`#`, `##`, `**`, `*`, `---`).**
 ---
 
 ## Duplicate Button Labels — ALWAYS Use Coordinates

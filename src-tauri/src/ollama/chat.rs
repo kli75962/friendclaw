@@ -1,10 +1,12 @@
 use futures_util::StreamExt;
 use serde_json::Value;
+use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter};
 
 use crate::memory::{append_conversation, bootstrap_memory, build_core_prompt, execute_memory_write, memory_dir, read_core, read_recent_conversations, run_memory_command};
 use crate::phone::{execute_tool, get_installed_apps, hide_overlay, is_cancelled, show_overlay};
 use crate::loadskills::{build_skills_prompt, load_tool_schemas};
+use crate::web_search::web_search;
 
 use super::types::{
     AgentStatusPayload, OllamaChatRequest, OllamaChunk, OllamaMessage, OllamaToolCall,
@@ -13,6 +15,15 @@ use super::types::{
 
 const MAX_TOOL_ROUNDS: usize = 200;
 
+/// A single shared HTTP client for all Ollama requests.
+/// Reusing it preserves the TCP connection pool across streaming rounds,
+/// avoiding repeated TLS handshakes (which is critical in tight agent loops).
+static OLLAMA_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn ollama_client() -> &'static reqwest::Client {
+    OLLAMA_CLIENT.get_or_init(reqwest::Client::new)
+}
+
 /// Build the static part of the system prompt (skills + installed apps).
 /// Called once per chat. Core memory is injected separately each round via prepareCall.
 async fn build_base_prompt(app: &AppHandle) -> String {
@@ -20,19 +31,19 @@ async fn build_base_prompt(app: &AppHandle) -> String {
     let apps_list = if apps.is_empty() {
         "  (no apps found)".to_string()
     } else {
-        apps.iter()
-            .map(|a| a.prompt_line())
-            .collect::<Vec<_>>()
-            .join("\n")
+        // Write directly into a pre-sized String to avoid an intermediate Vec allocation.
+        let mut buf = String::with_capacity(apps.len() * 60);
+        for (i, a) in apps.iter().enumerate() {
+            if i > 0 { buf.push('\n'); }
+            buf.push_str(&a.prompt_line());
+        }
+        buf
     };
 
     format!(
-        "
-        You are PhoneClaw, an AI agent that controls an Android phone on behalf of the user. \n\
-        Be helpful, concise, and proactive. Break tasks into tool calls and execute them step by step. \n\
-        The UI is plain text only. Raw markdown symbols (`#`, `##`, `**`, `*`, `---`) will appear as \
-        literal characters — NEVER use them.
-        
+        "You are PhoneClaw, an AI agent that controls an Android phone on behalf of the user.\n\
+        Be helpful, concise, and proactive. Break tasks into tool calls and execute them step by step.\n\
+        Plain text only. NEVER use raw markdown symbols (`#`, `##`, `**`, `*`, `---`).
         \n\n{skills}\n\n[INSTALLED APPS]\n{apps}",
         skills = build_skills_prompt(),
         apps = apps_list,
@@ -60,8 +71,6 @@ async fn stream_once(
     tool_schemas: &[Value],
     model: &str,
 ) -> Result<OllamaMessage, String> {
-    let client = reqwest::Client::new();
-
     let body = OllamaChatRequest {
         model: model.to_string(),
         messages: messages.to_vec(),
@@ -69,7 +78,7 @@ async fn stream_once(
         tools: tool_schemas.to_vec(),
     };
 
-    let response = client
+    let response = ollama_client()
         .post("http://10.0.2.2:11434/api/chat")
         .json(&body)
         .send()
@@ -240,37 +249,40 @@ pub async fn chat_ollama(
         )
         .ok();
 
-        // Check if the LLM requested tool calls
-        let tool_calls = match &final_msg.tool_calls {
-            Some(calls) if !calls.is_empty() => calls.clone(),
-            _ => {
-                // No tool calls — conversation is done
-                hide_overlay(&app);
-                app.emit(
-                    "ollama-stream",
-                    StreamPayload {
-                        content: String::new(),
-                        done: true,
-                    },
-                )
-                .map_err(|e| e.to_string())?;
+        // Extract tool_calls with take() so we get ownership without cloning,
+        // then push final_msg (now tool_calls=None) into history.
+        let mut final_msg = final_msg;
+        let tool_calls = final_msg.tool_calls.take().unwrap_or_default();
 
-                // Append conversation summary in background (fire-and-forget)
-                let user_msg = conversation.iter()
-                    .find(|m| m.role == "user")
-                    .map(|m| m.content.chars().take(300).collect::<String>())
-                    .unwrap_or_default();
-                let reply_text = final_msg.content.chars().take(500).collect::<String>();
-                let conv_dir = memory_dir(&app);
-                tokio::spawn(async move {
-                    append_conversation(conv_dir, user_msg, reply_text);
-                });
+        if tool_calls.is_empty() {
+            // No tool calls — conversation is done
+            hide_overlay(&app);
+            app.emit(
+                "ollama-stream",
+                StreamPayload {
+                    content: String::new(),
+                    done: true,
+                },
+            )
+            .map_err(|e| e.to_string())?;
 
-                return Ok(());
-            }
-        };
+            // Append conversation summary in background (fire-and-forget)
+            let user_msg = conversation.iter()
+                .find(|m| m.role == "user")
+                .map(|m| m.content.chars().take(300).collect::<String>())
+                .unwrap_or_default();
+            let reply_text = final_msg.content.chars().take(500).collect::<String>();
+            let conv_dir = memory_dir(&app);
+            tokio::spawn(async move {
+                append_conversation(conv_dir, user_msg, reply_text);
+            });
 
-        // Append assistant message with tool_calls to history
+            return Ok(());
+        }
+
+        // Restore tool_calls so history correctly records what was requested,
+        // then push assistant message.
+        final_msg.tool_calls = Some(tool_calls.clone());
         conversation.push(final_msg);
 
         // Execute each tool and collect results
@@ -311,6 +323,20 @@ pub async fn chat_ollama(
                 } else {
                     // view / search need the result synchronously
                     run_memory_command(&app, cmd, path, content, mode, query)
+                }
+            } else if tool_name == "web_search" {
+                let query = tool_args.get("query").and_then(Value::as_str).unwrap_or("");
+                if query.is_empty() {
+                    "error: missing 'query' argument".to_string()
+                } else {
+                    let max = tool_args.get("max_results").and_then(Value::as_u64).unwrap_or(5) as usize;
+                    let result = web_search(query, max.clamp(1, 10)).await;
+                    if result.starts_with("error:") {
+                        eprintln!("[web_search] error for query={:?}: {}", query, result);
+                    } else {
+                        eprintln!("[web_search] query={:?} results:\n{}", query, result);
+                    }
+                    result
                 }
             } else {
                 let result = execute_tool(&app, tool_name, tool_args).await;

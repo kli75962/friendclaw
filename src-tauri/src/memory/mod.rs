@@ -1,5 +1,4 @@
 mod fs;
-
 pub use fs::{append_conversation, bootstrap_memory, build_core_prompt, execute_memory_write, memory_dir, read_core, read_recent_conversations, run_memory_command};
 
 // ----- Tauri commands exposed to the frontend -----

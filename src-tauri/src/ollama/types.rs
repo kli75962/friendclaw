@@ -6,6 +6,10 @@ use serde_json::Value;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct OllamaMessage {
     pub role: String,
+    /// Ollama may omit or set `content: null` for tool-call-only rounds.
+    /// Using a custom deserializer coerces null/absent → empty string so the
+    /// whole chunk is never silently dropped by the streaming parser.
+    #[serde(default, deserialize_with = "deserialize_content")]
     pub content: String,
     /// Tool calls requested by the assistant (Ollama function-calling format).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -25,6 +29,14 @@ pub struct OllamaToolCallFunction {
     /// `deserialize_arguments` handles both transparently.
     #[serde(deserialize_with = "deserialize_arguments")]
     pub arguments: Value,
+}
+
+/// Coerces `null` or a missing `content` field to an empty string.
+/// Without this, any Ollama chunk where `content` is null fails to deserialize,
+/// causing the streaming parser to silently skip the chunk — dropping tool_calls
+/// contained in that same chunk and making it look like the model made no tool call.
+fn deserialize_content<'de, D: Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    Ok(Option::<String>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 /// Deserializes LLM tool call arguments that may arrive as either:

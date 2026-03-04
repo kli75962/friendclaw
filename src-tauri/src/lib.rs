@@ -2,6 +2,7 @@ mod memory;
 mod ollama;
 mod phone;
 mod loadskills;
+mod web_search;
 
 use memory::{get_memory_file, set_memory_file};
 use ollama::{chat_ollama, list_models};

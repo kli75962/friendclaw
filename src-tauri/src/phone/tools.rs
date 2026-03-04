@@ -5,7 +5,7 @@ use tauri::AppHandle;
 use tauri::Manager;
 
 /// Result returned to the LLM after executing a tool.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ToolResult {
     pub tool_name: String,
     pub success: bool,
