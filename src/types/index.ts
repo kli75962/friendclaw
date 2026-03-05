@@ -14,3 +14,15 @@ export interface StreamPayload {
 export interface AgentStatusPayload {
   message: string;
 }
+
+/** Session config returned by the Rust `get_session` command. */
+export interface SessionConfig {
+  device: {
+    device_id: string;
+    device_type: 'android' | 'desktop';
+    label: string;
+  };
+  hash_key: string;
+  paired_devices: { device_id: string; address: string; label: string }[];
+  bridge_port: number;
+}

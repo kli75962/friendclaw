@@ -1,0 +1,46 @@
+use serde::{Deserialize, Serialize};
+
+/// What kind of device this is.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceType {
+    Android,
+    Desktop,
+}
+
+/// Static info about this device.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DeviceInfo {
+    /// Randomly generated UUID, unique per installation.
+    pub device_id: String,
+    pub device_type: DeviceType,
+    /// Human-readable label the user assigns (e.g. "My Phone", "Home PC").
+    pub label: String,
+}
+
+/// A remote device that shares the same hash key and is listed as a peer.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PairedDevice {
+    pub device_id: String,
+    /// HTTP address the peer exposes for cross-device routing, e.g. "192.168.1.5:9876".
+    pub address: String,
+    pub label: String,
+}
+
+/// The full session config persisted locally on disk.
+/// All devices that share the same `hash_key` are considered paired.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct SessionConfig {
+    pub device: DeviceInfo,
+    /// SHA-256 hex of the user passphrase.  Used as the shared identifier.
+    pub hash_key: String,
+    /// Addresses of known peer devices (populated manually or via sharing).
+    pub paired_devices: Vec<PairedDevice>,
+    /// Port this device listens on for cross-device bridge requests (default 9876).
+    #[serde(default = "default_port")]
+    pub bridge_port: u16,
+}
+
+fn default_port() -> u16 {
+    9876
+}

@@ -1,0 +1,133 @@
+use std::path::PathBuf;
+use sha2::{Digest, Sha256};
+use tauri::{AppHandle, Manager};
+use uuid::Uuid;
+
+use super::types::{DeviceInfo, DeviceType, PairedDevice, SessionConfig};
+
+const SESSION_FILE: &str = "session.json";
+
+// ── Path ─────────────────────────────────────────────────────────────────────
+
+pub fn session_dir(app: &AppHandle) -> PathBuf {
+    app.path().app_data_dir().unwrap_or_default()
+}
+
+fn session_path(app: &AppHandle) -> PathBuf {
+    session_dir(app).join(SESSION_FILE)
+}
+
+// ── Hash ─────────────────────────────────────────────────────────────────────
+
+/// Deterministically hash a user passphrase into a fixed 64-char hex string.
+/// Same passphrase always produces the same hash key across all devices.
+pub fn hash_passphrase(passphrase: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(passphrase.trim().as_bytes());
+    hex::encode(hasher.finalize())
+}
+
+// ── Detect device type ───────────────────────────────────────────────────────
+
+fn detect_device_type() -> DeviceType {
+    #[cfg(target_os = "android")]
+    return DeviceType::Android;
+
+    #[cfg(not(target_os = "android"))]
+    return DeviceType::Desktop;
+}
+
+// ── Load / Save ───────────────────────────────────────────────────────────────
+
+/// Load session config from disk.  Returns `None` if file doesn't exist or
+/// fails to parse (caller should call `bootstrap` to create a default).
+pub fn load(app: &AppHandle) -> Option<SessionConfig> {
+    let bytes = std::fs::read(session_path(app)).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Write session config to disk atomically (write-then-rename).
+pub fn save(app: &AppHandle, config: &SessionConfig) -> Result<(), String> {
+    let path = session_path(app);
+    let dir = session_dir(app);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    let json = serde_json::to_string_pretty(config).map_err(|e| e.to_string())?;
+
+    // Write to a temp file then rename so the file is never half-written.
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json).map_err(|e| e.to_string())?;
+    std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+}
+
+/// Load or create a default session config.
+/// Default hash key is empty string hash — user should change it.
+pub fn bootstrap(app: &AppHandle) -> SessionConfig {
+    if let Some(cfg) = load(app) {
+        return cfg;
+    }
+    let cfg = SessionConfig {
+        device: DeviceInfo {
+            device_id: Uuid::new_v4().to_string(),
+            device_type: detect_device_type(),
+            label: default_label(),
+        },
+        hash_key: hash_passphrase(""), // placeholder until user sets a passphrase
+        paired_devices: Vec::new(),
+        bridge_port: 9876,
+    };
+    let _ = save(app, &cfg);
+    cfg
+}
+
+fn default_label() -> String {
+    #[cfg(target_os = "android")]
+    return "My Phone".to_string();
+
+    #[cfg(not(target_os = "android"))]
+    // Use the HOSTNAME env var if available, otherwise fall back to "My PC".
+    std::env::var("HOSTNAME").unwrap_or_else(|_| "My PC".to_string())
+}
+
+// ── Mutations ────────────────────────────────────────────────────────────────
+
+/// Replace the session hash key directly.
+/// Rejects anything that isn't a 64-character lowercase hex string.
+pub fn set_hash_key(app: &AppHandle, hash_key: &str) -> Result<SessionConfig, String> {
+    let hash_key = hash_key.trim();
+    if hash_key.len() != 64 || !hash_key.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("Invalid hash key — must be the 64-character hex key shown in the app.".to_string());
+    }
+    let mut cfg = load(app).ok_or("Session not initialised")?;
+    cfg.hash_key = hash_key.to_string();
+    save(app, &cfg)?;
+    Ok(cfg)
+}
+
+/// Update the device label.
+pub fn set_label(app: &AppHandle, label: &str) -> Result<SessionConfig, String> {
+    let mut cfg = load(app).ok_or("Session not initialised")?;
+    cfg.device.label = label.to_string();
+    save(app, &cfg)?;
+    Ok(cfg)
+}
+
+/// Add or update a paired peer (matched by `device_id`).
+pub fn upsert_peer(app: &AppHandle, peer: PairedDevice) -> Result<SessionConfig, String> {
+    let mut cfg = load(app).ok_or("Session not initialised")?;
+    if let Some(existing) = cfg.paired_devices.iter_mut().find(|p| p.device_id == peer.device_id) {
+        *existing = peer;
+    } else {
+        cfg.paired_devices.push(peer);
+    }
+    save(app, &cfg)?;
+    Ok(cfg)
+}
+
+/// Remove a paired peer by `device_id`.
+pub fn remove_peer(app: &AppHandle, device_id: &str) -> Result<SessionConfig, String> {
+    let mut cfg = load(app).ok_or("Session not initialised")?;
+    cfg.paired_devices.retain(|p| p.device_id != device_id);
+    save(app, &cfg)?;
+    Ok(cfg)
+}

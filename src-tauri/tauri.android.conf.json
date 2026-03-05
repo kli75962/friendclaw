@@ -1,0 +1,6 @@
+{
+  "build": {
+    "beforeDevCommand": "bun run dev:mobile",
+    "devUrl": "http://localhost:1422"
+  }
+}

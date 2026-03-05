@@ -1,28 +1,18 @@
 use futures_util::StreamExt;
 use serde_json::Value;
-use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter};
 
 use crate::memory::{append_conversation, bootstrap_memory, build_core_prompt, execute_memory_write, memory_dir, read_core, read_recent_conversations, run_memory_command};
 use crate::phone::{execute_tool, get_installed_apps, hide_overlay, is_cancelled, show_overlay};
 use crate::loadskills::{build_skills_prompt, load_tool_schemas};
-use crate::web_search::web_search;
 
+use super::ollama_client;
 use super::types::{
     AgentStatusPayload, OllamaChatRequest, OllamaChunk, OllamaMessage, OllamaToolCall,
-    StreamPayload,
+    StreamPayload, ollama_chat_url,
 };
 
 const MAX_TOOL_ROUNDS: usize = 200;
-
-/// A single shared HTTP client for all Ollama requests.
-/// Reusing it preserves the TCP connection pool across streaming rounds,
-/// avoiding repeated TLS handshakes (which is critical in tight agent loops).
-static OLLAMA_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-
-fn ollama_client() -> &'static reqwest::Client {
-    OLLAMA_CLIENT.get_or_init(reqwest::Client::new)
-}
 
 /// Build the static part of the system prompt (skills + installed apps).
 /// Called once per chat. Core memory is injected separately each round via prepareCall.
@@ -41,9 +31,11 @@ async fn build_base_prompt(app: &AppHandle) -> String {
     };
 
     format!(
-        "You are PhoneClaw, an AI agent that controls an Android phone on behalf of the user.\n\
-        Be helpful, concise, and proactive. Break tasks into tool calls and execute them step by step.\n\
+        "
+        You are PhoneClaw, an AI agent that controls an Android phone on behalf of the user. \n\
+        Be helpful, concise, and proactive. Break tasks into tool calls and execute them step by step. \n\
         Plain text only. NEVER use raw markdown symbols (`#`, `##`, `**`, `*`, `---`).
+        
         \n\n{skills}\n\n[INSTALLED APPS]\n{apps}",
         skills = build_skills_prompt(),
         apps = apps_list,
@@ -79,7 +71,7 @@ async fn stream_once(
     };
 
     let response = ollama_client()
-        .post("http://10.0.2.2:11434/api/chat")
+        .post(ollama_chat_url())
         .json(&body)
         .send()
         .await
@@ -323,20 +315,6 @@ pub async fn chat_ollama(
                 } else {
                     // view / search need the result synchronously
                     run_memory_command(&app, cmd, path, content, mode, query)
-                }
-            } else if tool_name == "web_search" {
-                let query = tool_args.get("query").and_then(Value::as_str).unwrap_or("");
-                if query.is_empty() {
-                    "error: missing 'query' argument".to_string()
-                } else {
-                    let max = tool_args.get("max_results").and_then(Value::as_u64).unwrap_or(5) as usize;
-                    let result = web_search(query, max.clamp(1, 10)).await;
-                    if result.starts_with("error:") {
-                        eprintln!("[web_search] error for query={:?}: {}", query, result);
-                    } else {
-                        eprintln!("[web_search] query={:?} results:\n{}", query, result);
-                    }
-                    result
                 }
             } else {
                 let result = execute_tool(&app, tool_name, tool_args).await;

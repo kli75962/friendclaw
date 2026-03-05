@@ -29,4 +29,16 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "str
 tokio = { version = "1", features = ["full"] }
 # futures-util: stream helpers (StreamExt) for reading NDJSON chunks
 futures-util = "0.3"
+# dotenvy: load key=value secret files (e.g. .secrets) into env vars at startup
+dotenvy = "0.15"
+# uuid: generate unique device IDs (v4 = random)
+uuid = { version = "1", features = ["v4"] }
+# sha2: hash user passphrase into a safe hash key (SHA-256)
+sha2 = "0.10"
+# hex: encode SHA-256 bytes as a hex string
+hex = "0.4"
+# axum: lightweight embedded HTTP server for the device bridge and ping endpoint
+axum = "0.7"
+# serenity: Discord bot framework using rustls (avoids OpenSSL, consistent with reqwest)
+serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"] }
 

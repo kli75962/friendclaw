@@ -85,3 +85,14 @@ pub struct StreamPayload {
 pub struct AgentStatusPayload {
     pub message: String,
 }
+
+/// Return the Ollama API base URL for the current platform.
+/// - Android emulator: uses the special `10.0.2.2` host that maps to the PC running the emulator.
+/// - Desktop: uses localhost.
+pub fn ollama_chat_url() -> &'static str {
+    #[cfg(target_os = "android")]
+    return "http://10.0.2.2:11434/api/chat";
+
+    #[cfg(not(target_os = "android"))]
+    "http://127.0.0.1:11434/api/chat"
+}

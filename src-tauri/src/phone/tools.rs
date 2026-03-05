@@ -22,12 +22,11 @@ pub async fn execute_tool(app: &AppHandle, name: &str, args: &Value) -> ToolResu
 
     #[cfg(not(target_os = "android"))]
     {
-        // Desktop stub — echoes the call so development works without a device
-        let _ = app;
+        let _ = (app, args);
         ToolResult {
             tool_name: name.to_string(),
-            success: true,
-            output: format!("[desktop stub] tool `{name}` called with args: {args}"),
+            success: false,
+            output: format!("error: tool `{name}` requires an Android device. This process is not running on Android."),
         }
     }
 }

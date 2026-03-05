@@ -144,11 +144,8 @@ pub fn run_memory_command(
             let Some(q) = query else {
                 return "error: 'query' is required for search".to_string();
             };
-            let terms: Vec<String> = q
-                .to_lowercase()
-                .split_whitespace()
-                .map(String::from)
-                .collect();
+            let q_lower = q.to_lowercase();
+            let terms: Vec<&str> = q_lower.split_whitespace().collect();
 
             // Search all files, or one specific file if path is given
             let files: Vec<PathBuf> = if let Some(p) = path {
@@ -171,7 +168,7 @@ pub fn run_memory_command(
                     .to_string_lossy();
                 for (i, line) in text.lines().enumerate() {
                     let lower = line.to_lowercase();
-                    if terms.iter().any(|t| lower.contains(t.as_str())) {
+                    if terms.iter().any(|t| lower.contains(*t)) {
                         matches.push(format!("{fname}:{}:{line}", i + 1));
                     }
                 }

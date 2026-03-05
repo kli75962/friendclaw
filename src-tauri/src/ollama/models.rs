@@ -1,6 +1,7 @@
 use serde::Deserialize;
-use std::sync::OnceLock;
 use tauri::command;
+
+use super::ollama_client;
 
 #[derive(Deserialize, serde::Serialize)]
 pub struct OllamaModel {
@@ -12,17 +13,16 @@ struct OllamaTagsResponse {
     models: Vec<OllamaModel>,
 }
 
-static OLLAMA_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-
-fn ollama_client() -> &'static reqwest::Client {
-    OLLAMA_CLIENT.get_or_init(reqwest::Client::new)
-}
-
 /// Fetch the list of locally available Ollama models.
 #[command]
 pub async fn list_models() -> Result<Vec<OllamaModel>, String> {
+    #[cfg(target_os = "android")]
+    let tags_url = "http://10.0.2.2:11434/api/tags";
+    #[cfg(not(target_os = "android"))]
+    let tags_url = "http://127.0.0.1:11434/api/tags";
+
     let response = ollama_client()
-        .get("http://10.0.2.2:11434/api/tags")
+        .get(tags_url)
         .send()
         .await
         .map_err(|e| format!("Cannot reach Ollama: {e}"))?;
