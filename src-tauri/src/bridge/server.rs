@@ -53,6 +53,13 @@ async fn register_handler(
             label,
         },
     );
+    // A device just came online — emit updated status to the frontend immediately.
+    let app_clone = (*app).clone();
+    tauri::async_runtime::spawn(async move {
+        let statuses = crate::bridge::health::check_all_peers(&app_clone).await;
+        use tauri::Emitter;
+        app_clone.emit("peer-status-changed", statuses).ok();
+    });
     StatusCode::OK
 }
 

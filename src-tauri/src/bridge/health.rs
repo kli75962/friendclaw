@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use std::sync::OnceLock;
 use reqwest::Client;
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter};
 
 use crate::session::store;
 use super::types::PeerStatus;
@@ -61,4 +62,25 @@ pub async fn check_all_peers(app: &AppHandle) -> Vec<PeerStatus> {
         }
     }
     results
+}
+
+/// Background task: polls all peers every 3 seconds and emits a
+/// `peer-status-changed` Tauri event only when any device's status changes.
+pub fn start_peer_monitor(app: AppHandle) {
+    tauri::async_runtime::spawn(async move {
+        let mut prev: HashMap<String, bool> = HashMap::new();
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            let statuses = check_all_peers(&app).await;
+            let changed = statuses.iter().any(|s| {
+                prev.get(&s.device_id).copied() != Some(s.online)
+            });
+            if changed {
+                for s in &statuses {
+                    prev.insert(s.device_id.clone(), s.online);
+                }
+                app.emit("peer-status-changed", &statuses).ok();
+            }
+        }
+    });
 }

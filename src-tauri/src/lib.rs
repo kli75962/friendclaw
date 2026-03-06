@@ -10,7 +10,7 @@ mod queue;
 use memory::{get_memory_file, set_memory_file};
 use ollama::{chat_ollama, list_models};
 use session::{add_paired_device, get_session, remove_paired_device, set_device_label, set_session_hash_key};
-use bridge::{check_peer_online, discover_and_pair, get_all_peer_status, get_local_address, get_qr_pair_svg, pair_from_qr, send_to_device, start_bridge_server};
+use bridge::{check_peer_online, discover_and_pair, get_all_peer_status, get_local_address, get_qr_pair_svg, pair_from_qr, send_to_device, start_bridge_server, start_peer_monitor};
 use queue::{flush_all_pending, flush_queue, get_pending_queue, get_queue, queue_command};
 
 /// App entry point — registers Tauri commands and starts the event loop.
@@ -38,7 +38,10 @@ pub fn run() {
             // 1. Start the bridge HTTP server so peers can reach this device.
             start_bridge_server(app.handle().clone());
 
-            // 2. On startup: try to deliver any messages that were queued while
+            // 2. Start the background peer health monitor (emits peer-status-changed events).
+            start_peer_monitor(app.handle().clone());
+
+            // 3. On startup: try to deliver any messages that were queued while
             //    the target device was offline.
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {

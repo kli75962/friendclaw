@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { ArrowLeft, Camera, ChevronRight, ImagePlus, Monitor, Save, QrCode, Cpu, Smartphone, Trash2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { scan, Format } from '@tauri-apps/plugin-barcode-scanner';
@@ -298,6 +299,7 @@ export function SettingsScreen({ model, availableModels, onModelChange, onBack }
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState('');
+  const [peerStatus, setPeerStatus] = useState<Record<string, boolean>>({});
   const { session, refresh, removeLinkedDevice } = useSession();
   const isAndroid = session?.device.device_type === 'android';
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -309,6 +311,19 @@ export function SettingsScreen({ model, availableModels, onModelChange, onBack }
       .then((content) => setFileContent(content))
       .catch(() => setFileContent(''));
   }, [activeMemTab]);
+
+  useEffect(() => {
+    if ((session?.paired_devices ?? []).length === 0) return;
+    // Initial poll to get current state.
+    invoke<Array<{ device_id: string; online: boolean }>>('get_all_peer_status')
+      .then((list) => setPeerStatus(Object.fromEntries(list.map((p) => [p.device_id, p.online]))))
+      .catch(() => {});
+    // Listen for real-time updates emitted by the Rust peer monitor.
+    const unlisten = listen<Array<{ device_id: string; online: boolean }>>('peer-status-changed', (event) => {
+      setPeerStatus(Object.fromEntries(event.payload.map((p) => [p.device_id, p.online])));
+    });
+    return () => { unlisten.then((fn) => fn()); };
+  }, [session?.paired_devices]);
 
   async function handleSave() {
     setSaving(true);
@@ -446,12 +461,19 @@ export function SettingsScreen({ model, availableModels, onModelChange, onBack }
                               <p className="text-[12px] text-gray-500 mt-0.5 font-mono">{dev.address}</p>
                             </div>
                           </div>
-                          <button
-                            onClick={async () => { await removeLinkedDevice(dev.device_id); }}
-                            className="p-2 rounded-full hover:bg-red-500/10 transition-colors"
-                          >
-                            <Trash2 size={15} className="text-red-400" />
-                          </button>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-[12px] font-medium ${peerStatus[dev.device_id] ? 'text-green-400' : 'text-gray-500'}`}>
+                              {peerStatus[dev.device_id] !== undefined
+                                ? (peerStatus[dev.device_id] ? 'Online' : 'Offline')
+                                : '—'}
+                            </span>
+                            <button
+                              onClick={async () => { await removeLinkedDevice(dev.device_id); }}
+                              className="p-2 rounded-full hover:bg-red-500/10 transition-colors"
+                            >
+                              <Trash2 size={15} className="text-red-400" />
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ))}

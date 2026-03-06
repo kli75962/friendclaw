@@ -1,19 +1,27 @@
 use futures_util::StreamExt;
 use serde_json::Value;
+use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter};
 
 use crate::memory::{append_conversation, bootstrap_memory, build_core_prompt, execute_memory_write, memory_dir, read_core, read_recent_conversations, run_memory_command};
 use crate::phone::{execute_tool, get_installed_apps, hide_overlay, is_cancelled, show_overlay};
 use crate::loadskills::{build_skills_prompt, load_tool_schemas};
-use crate::web_search::web_search;
 
-use super::ollama_client;
 use super::types::{
     AgentStatusPayload, OllamaChatRequest, OllamaChunk, OllamaMessage, OllamaToolCall,
-    StreamPayload, ollama_chat_url,
+    StreamPayload,
 };
 
 const MAX_TOOL_ROUNDS: usize = 200;
+
+/// A single shared HTTP client for all Ollama requests.
+/// Reusing it preserves the TCP connection pool across streaming rounds,
+/// avoiding repeated TLS handshakes (which is critical in tight agent loops).
+static OLLAMA_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn ollama_client() -> &'static reqwest::Client {
+    OLLAMA_CLIENT.get_or_init(reqwest::Client::new)
+}
 
 /// Build the static part of the system prompt (skills + installed apps).
 /// Called once per chat. Core memory is injected separately each round via prepareCall.
@@ -22,6 +30,7 @@ async fn build_base_prompt(app: &AppHandle) -> String {
     let apps_list = if apps.is_empty() {
         "  (no apps found)".to_string()
     } else {
+        // Write directly into a pre-sized String to avoid an intermediate Vec allocation.
         let mut buf = String::with_capacity(apps.len() * 60);
         for (i, a) in apps.iter().enumerate() {
             if i > 0 { buf.push('\n'); }
@@ -30,28 +39,13 @@ async fn build_base_prompt(app: &AppHandle) -> String {
         buf
     };
 
-    let cfg = crate::session::store::bootstrap(app);
-    let device_section = if cfg.paired_devices.is_empty() {
-        String::new()
-    } else {
-        let mut buf = String::from("\n\n[PAIRED DEVICES]\n");
-        buf.push_str("Phone tools (tap, swipe, get_screen, etc.) are forwarded to the paired Android device automatically.\n");
-        for p in &cfg.paired_devices {
-            buf.push_str(&format!("- {} ({})\n", p.label, p.device_id));
-        }
-        buf
-    };
-
     format!(
-        "
-        You are PhoneClaw, an AI agent that controls an Android phone on behalf of the user. \n\
-        Be helpful, concise, and proactive. Break tasks into tool calls and execute them step by step. \n\
+        "You are PhoneClaw, an AI agent that controls an Android phone on behalf of the user.\n\
+        Be helpful, concise, and proactive. Break tasks into tool calls and execute them step by step.\n\
         Plain text only. NEVER use raw markdown symbols (`#`, `##`, `**`, `*`, `---`).
-        
-        \n\n{skills}\n\n[INSTALLED APPS]\n{apps}{devices}",
+        \n\n{skills}\n\n[INSTALLED APPS]\n{apps}",
         skills = build_skills_prompt(),
         apps = apps_list,
-        devices = device_section,
     )
 }
 
@@ -84,7 +78,7 @@ async fn stream_once(
     };
 
     let response = ollama_client()
-        .post(ollama_chat_url())
+        .post("http://10.0.2.2:11434/api/chat")
         .json(&body)
         .send()
         .await
@@ -300,29 +294,8 @@ pub async fn chat_ollama(
             })
             .ok();
 
-            // ── Intercept `device_status` — check peer reachability in Rust ──
-            let output = if tool_name == "device_status" {
-                let device_id = tool_args.get("device_id").and_then(Value::as_str).unwrap_or("");
-                let cfg = crate::session::store::bootstrap(&app);
-                if device_id.is_empty() || device_id == cfg.device.device_id {
-                    "online".to_string()
-                } else if let Some(peer) = cfg.paired_devices.iter().find(|p| p.device_id == device_id) {
-                    let reachable = crate::bridge::health::check_peer(&peer.address, &cfg.hash_key).await;
-                    if reachable { "online".to_string() } else { "offline".to_string() }
-                } else {
-                    "unknown device_id".to_string()
-                }
-            // ── Intercept `web_search` — run in Rust, not forwarded to phone ──
-            } else if tool_name == "web_search" {
-                let query = tool_args.get("query").and_then(Value::as_str).unwrap_or("");
-                if query.is_empty() {
-                    "error: missing 'query' argument".to_string()
-                } else {
-                    let max = tool_args.get("max_results").and_then(Value::as_u64).unwrap_or(5) as usize;
-                    web_search(query, max.clamp(1, 10)).await
-                }
             // ── Intercept `memory` tool calls in Rust — never forward to Kotlin ──
-            } else if tool_name == "memory" {
+            let output = if tool_name == "memory" {
                 let cmd     = tool_args.get("command").and_then(Value::as_str).unwrap_or("");
                 let path    = tool_args.get("path").and_then(Value::as_str);
                 let content = tool_args.get("content").and_then(Value::as_str);
