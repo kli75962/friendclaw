@@ -15,14 +15,15 @@ function maskKey(key: string): string {
   return key.slice(0, 5) + '*'.repeat(Math.min(key.length - 5, 20));
 }
 
-/** Generate a cryptographically random passphrase (UUID v4 without dashes). */
+/** Generate a cryptographically random 64-character hex key. */
 function generatePassphrase(): string {
-  return crypto.randomUUID().replace(/-/g, '');
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
 }
 
 /** Popup to view the current hash key and optionally generate a new one. */
 export function GenerateHashModal({ onClose }: GenerateHashModalProps) {
-  const { session, setPassphrase } = useSession();
+  const { session, setHashKey } = useSession();
   const [step, setStep] = useState<Step>('view');
   const [newPassphrase, setNewPassphrase] = useState('');
   const [loading, setLoading] = useState(false);
@@ -36,7 +37,7 @@ export function GenerateHashModal({ onClose }: GenerateHashModalProps) {
     setError('');
     const passphrase = generatePassphrase();
     try {
-      await setPassphrase(passphrase);
+      await setHashKey(passphrase);
       setNewPassphrase(passphrase);
       setStep('done');
     } catch (e) {
@@ -79,7 +80,7 @@ export function GenerateHashModal({ onClose }: GenerateHashModalProps) {
           <div className="rounded-xl bg-yellow-500/10 border border-yellow-500/20 px-4 py-3">
             <p className="text-xs text-yellow-400 leading-relaxed">
               ⚠️ Generating a new key will abandon the current one.
-              Any device or Discord user linked with the old key will be disconnected.
+              Any linked device using the old key will be disconnected.
             </p>
           </div>
 
@@ -115,12 +116,6 @@ export function GenerateHashModal({ onClose }: GenerateHashModalProps) {
               {newPassphrase}
             </p>
           </div>
-
-          <p className="text-xs text-gray-500">
-            In Discord, type{' '}
-            <span className="font-mono text-gray-400">!link {newPassphrase}</span>{' '}
-            to link your account.
-          </p>
 
           <button
             onClick={handleCopy}

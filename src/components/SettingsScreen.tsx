@@ -159,7 +159,7 @@ export function SettingsScreen({ model, availableModels, onModelChange, onBack }
               </button>
             </div>
             <p className="px-2 pt-2 text-xs text-gray-500">
-              Share your key with Discord (<span className="font-mono bg-[#2C2C2C]/50 px-1 py-0.5 rounded text-gray-400">!link key</span>) to sync sessions.
+              Share your key to link devices and sync sessions.
             </p>
           </div>
 

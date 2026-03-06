@@ -39,6 +39,5 @@ sha2 = "0.10"
 hex = "0.4"
 # axum: lightweight embedded HTTP server for the device bridge and ping endpoint
 axum = "0.7"
-# serenity: Discord bot framework using rustls (avoids OpenSSL, consistent with reqwest)
-serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "rustls_backend", "model"] }
+
 
