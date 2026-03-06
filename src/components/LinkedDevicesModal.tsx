@@ -1,5 +1,6 @@
-import { Smartphone, Monitor, Trash2, Plus, Copy, Check } from 'lucide-react';
+import { Smartphone, Monitor, Trash2, Plus, Copy, Check, QrCode } from 'lucide-react';
 import { Modal } from './Modal';
+import { QrPairModal } from './QrPairModal';
 import { useSession } from '../hooks/useSession';
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useState } from 'react';
@@ -18,6 +19,7 @@ export function LinkedDevicesModal({ onClose }: LinkedDevicesModalProps) {
   const [addError, setAddError] = useState('');
   const [localAddress, setLocalAddress] = useState('');
   const [copied, setCopied] = useState(false);
+  const [showQr, setShowQr] = useState(false);
 
   useEffect(() => {
     invoke<string>('get_local_address').then(setLocalAddress).catch(() => {});
@@ -113,7 +115,16 @@ export function LinkedDevicesModal({ onClose }: LinkedDevicesModalProps) {
           </p>
         </div>
 
-        {/* Add peer */}
+        {/* QR pairing */}
+        <button
+          onClick={() => setShowQr(true)}
+          className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl bg-purple-600 text-sm font-medium text-white hover:bg-purple-500 transition-colors"
+        >
+          <QrCode size={15} />
+          {session.device.device_type === 'android' ? 'Scan QR to link' : 'Show QR to link'}
+        </button>
+
+        {/* Add peer manually */}
         {showAdd ? (
           <div className="flex flex-col gap-2 px-4 py-3 rounded-xl bg-[#1E1F20] border border-[#2C2C2C]">
             <p className="text-xs text-gray-400">
@@ -162,6 +173,8 @@ export function LinkedDevicesModal({ onClose }: LinkedDevicesModalProps) {
           </button>
         )}
       </div>
+
+      {showQr && <QrPairModal onClose={() => { setShowQr(false); refresh(); }} />}
     </Modal>
   );
 }

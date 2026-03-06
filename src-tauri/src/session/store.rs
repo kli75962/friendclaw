@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
@@ -15,16 +14,6 @@ pub fn session_dir(app: &AppHandle) -> PathBuf {
 
 fn session_path(app: &AppHandle) -> PathBuf {
     session_dir(app).join(SESSION_FILE)
-}
-
-// ── Hash ─────────────────────────────────────────────────────────────────────
-
-/// Deterministically hash a user passphrase into a fixed 64-char hex string.
-/// Same passphrase always produces the same hash key across all devices.
-pub fn hash_passphrase(passphrase: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(passphrase.trim().as_bytes());
-    hex::encode(hasher.finalize())
 }
 
 // ── Detect device type ───────────────────────────────────────────────────────
@@ -61,18 +50,20 @@ pub fn save(app: &AppHandle, config: &SessionConfig) -> Result<(), String> {
 }
 
 /// Load or create a default session config.
-/// Default hash key is empty string hash — user should change it.
+/// Generates a cryptographically random hash key on first boot.
 pub fn bootstrap(app: &AppHandle) -> SessionConfig {
     if let Some(cfg) = load(app) {
         return cfg;
     }
+    // Two random UUID v4s concatenated in simple form = 64 lowercase hex chars.
+    let hash_key = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
     let cfg = SessionConfig {
         device: DeviceInfo {
             device_id: Uuid::new_v4().to_string(),
             device_type: detect_device_type(),
             label: default_label(),
         },
-        hash_key: hash_passphrase(""), // placeholder until user sets a passphrase
+        hash_key,
         paired_devices: Vec::new(),
         bridge_port: 9876,
     };

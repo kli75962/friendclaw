@@ -1,8 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
-import { ArrowLeft, ChevronDown, Check, Save } from 'lucide-react';
+import { ArrowLeft, ChevronDown, Check, Save, QrCode } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { GenerateHashModal } from './GenerateHashModal';
 import { LinkHashModal } from './LinkHashModal';
+import { QrPairModal } from './QrPairModal';
 
 // ── Types ───────────────────────────────────────────────────────────────────────────────
 
@@ -35,6 +36,7 @@ export function SettingsScreen({ model, availableModels, onModelChange, onBack }
   const [modelOpen, setModelOpen] = useState(false);
   const [showLinkHash, setShowLinkHash] = useState(false);
   const [showGenerateHash, setShowGenerateHash] = useState(false);
+  const [showQrPair, setShowQrPair] = useState(false);
 
   // Memory tab state
   const [activeTab, setActiveTab] = useState<MemoryFile>('core.md');
@@ -71,6 +73,7 @@ export function SettingsScreen({ model, availableModels, onModelChange, onBack }
     <div className="flex flex-col h-screen bg-[#131314] text-[#E3E3E3]">
       {showLinkHash && <LinkHashModal onClose={() => setShowLinkHash(false)} />}
       {showGenerateHash && <GenerateHashModal onClose={() => setShowGenerateHash(false)} />}
+      {showQrPair && <QrPairModal onClose={() => setShowQrPair(false)} />}
       {/* Header */}
       <div className="flex items-center gap-3 px-2 py-3 border-b border-[#2C2C2C]">
         <button
@@ -156,6 +159,17 @@ export function SettingsScreen({ model, availableModels, onModelChange, onBack }
               >
                 <span className="text-gray-200 font-medium group-hover:text-white transition-colors">Generate hash key</span>
                 <span className="text-xs text-gray-500 group-hover:text-gray-400 transition-colors bg-[#2C2C2C]/30 px-2 py-1 rounded">Create shareable key</span>
+              </button>
+              <div className="h-px bg-[#2C2C2C] mx-4" />
+              <button
+                onClick={() => setShowQrPair(true)}
+                className="w-full flex items-center justify-between px-4 py-4 text-sm hover:bg-[#252526] transition-colors group"
+              >
+                <span className="text-gray-200 font-medium group-hover:text-white transition-colors">Pair with QR code</span>
+                <span className="flex items-center gap-1.5 text-xs text-purple-400 group-hover:text-purple-300 transition-colors bg-purple-500/10 px-2 py-1 rounded">
+                  <QrCode size={12} />
+                  Scan or show
+                </span>
               </button>
             </div>
             <p className="px-2 pt-2 text-xs text-gray-500">

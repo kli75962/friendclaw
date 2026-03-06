@@ -32,7 +32,7 @@ pub struct PairedDevice {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SessionConfig {
     pub device: DeviceInfo,
-    /// SHA-256 hex of the user passphrase.  Used as the shared identifier.
+    /// 64-character random hex key shared across paired devices.
     pub hash_key: String,
     /// Addresses of known peer devices (populated manually or via sharing).
     pub paired_devices: Vec<PairedDevice>,

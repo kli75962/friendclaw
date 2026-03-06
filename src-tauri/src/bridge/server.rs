@@ -1,12 +1,12 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::{Json, Router, extract::State, routing::{get, post}};
+use axum::{Json, Router, extract::{Query, State}, http::StatusCode, routing::{get, post}};
 use tauri::AppHandle;
 
 use crate::session::store;
 use super::exec::exec_handler;
-use super::types::PingResponse;
+use super::types::{PingQuery, PingResponse};
 
 // ── Server state ─────────────────────────────────────────────────────────────
 
@@ -15,15 +15,20 @@ pub type BridgeState = Arc<AppHandle>;
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
-/// GET /ping — identify this device and confirm it is reachable.
-/// Callers compare the returned `hash_key` to verify it is the right peer.
-async fn ping_handler(State(app): State<BridgeState>) -> Json<PingResponse> {
+/// GET /ping?key=<hash_key> — verify the caller knows the shared key, then return device info.
+/// Returns 401 if the key does not match. The hash key is never included in the response.
+async fn ping_handler(
+    State(app): State<BridgeState>,
+    Query(query): Query<PingQuery>,
+) -> Result<Json<PingResponse>, StatusCode> {
     let cfg = store::bootstrap(&app);
-    Json(PingResponse {
+    if query.key != cfg.hash_key {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(Json(PingResponse {
         device_id: cfg.device.device_id,
         label: cfg.device.label,
-        hash_key: cfg.hash_key,
-    })
+    }))
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────

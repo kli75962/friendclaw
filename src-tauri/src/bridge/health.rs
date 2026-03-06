@@ -3,7 +3,7 @@ use reqwest::Client;
 use tauri::AppHandle;
 
 use crate::session::store;
-use super::types::{PeerStatus, PingResponse};
+use super::types::PeerStatus;
 
 /// Reuse the same HTTP client as the rest of the app (connection pool).
 static HEALTH_CLIENT: OnceLock<Client> = OnceLock::new();
@@ -20,16 +20,18 @@ fn client() -> &'static Client {
 
 /// Ping a single peer address (e.g. `"192.168.1.5:9876"`) and check if it is
 /// online AND shares our hash key.
-pub async fn check_peer(address: &str, expected_hash_key: &str) -> bool {
+/// Sends the key as a query param; the server returns 401 if it doesn't match.
+pub async fn check_peer(address: &str, hash_key: &str) -> bool {
     let url = format!("http://{address}/ping");
-    let Ok(resp) = client().get(&url).send().await else {
+    let Ok(resp) = client()
+        .get(&url)
+        .query(&[("key", hash_key)])
+        .send()
+        .await
+    else {
         return false;
     };
-    let Ok(body) = resp.json::<PingResponse>().await else {
-        return false;
-    };
-    // Verify the peer is using the same hash key (same session passphrase).
-    body.hash_key == expected_hash_key
+    resp.status().is_success()
 }
 
 /// Check all paired peers in the session and return their online status.

@@ -10,7 +10,7 @@ mod queue;
 use memory::{get_memory_file, set_memory_file};
 use ollama::{chat_ollama, list_models};
 use session::{add_paired_device, get_session, remove_paired_device, set_device_label, set_session_hash_key};
-use bridge::{check_peer_online, get_all_peer_status, send_to_device, start_bridge_server};
+use bridge::{check_peer_online, discover_and_pair, get_all_peer_status, get_local_address, get_qr_pair_svg, pair_from_qr, send_to_device, start_bridge_server};
 use queue::{flush_all_pending, flush_queue, get_pending_queue, get_queue, queue_command};
 
 /// App entry point — registers Tauri commands and starts the event loop.
@@ -23,9 +23,17 @@ pub fn run() {
         let _ = dotenvy::from_filename(secrets_path);
     }
 
-    tauri::Builder::default()
+    #[allow(unused_mut)]
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(phone::plugin::init())
+        .plugin(phone::plugin::init());
+
+    #[cfg(target_os = "android")]
+    {
+        builder = builder.plugin(tauri_plugin_barcode_scanner::init());
+    }
+
+    builder
         .setup(|app| {
             // 1. Start the bridge HTTP server so peers can reach this device.
             start_bridge_server(app.handle().clone());
@@ -54,6 +62,10 @@ pub fn run() {
             check_peer_online,
             get_all_peer_status,
             send_to_device,
+            get_local_address,
+            discover_and_pair,
+            get_qr_pair_svg,
+            pair_from_qr,
             // queue
             get_queue,
             get_pending_queue,
