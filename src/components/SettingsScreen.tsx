@@ -1,13 +1,15 @@
 import { invoke } from '@tauri-apps/api/core';
-import { ArrowLeft, ChevronDown, Check, Save, QrCode } from 'lucide-react';
+import { ArrowLeft, Camera, ChevronRight, ImagePlus, Save, QrCode, Cpu } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { GenerateHashModal } from './GenerateHashModal';
-import { LinkHashModal } from './LinkHashModal';
-import { QrPairModal } from './QrPairModal';
+import { scan, Format } from '@tauri-apps/plugin-barcode-scanner';
+import jsQR from 'jsqr';
+import { Modal } from './Modal';
+import { useSession } from '../hooks/useSession';
 
 // ── Types ───────────────────────────────────────────────────────────────────────────────
 
 type MemoryFile = 'core.md' | 'conversations.jsonl';
+type SettingsTab = 'general' | 'memory';
 
 interface SettingsScreenProps {
   model: string;
@@ -31,34 +33,287 @@ const MEMORY_TABS: { file: MemoryFile; label: string; desc: string }[] = [
   },
 ];
 
-/** Full-screen settings page styled like a native mobile settings app. */
-export function SettingsScreen({ model, availableModels, onModelChange, onBack }: SettingsScreenProps) {
-  const [modelOpen, setModelOpen] = useState(false);
-  const [showLinkHash, setShowLinkHash] = useState(false);
-  const [showGenerateHash, setShowGenerateHash] = useState(false);
-  const [showQrPair, setShowQrPair] = useState(false);
+// ── Sub-components ──────────────────────────────────────────────────────────────────
 
-  // Memory tab state
-  const [activeTab, setActiveTab] = useState<MemoryFile>('core.md');
+function SegmentControl<T extends string>({
+  options,
+  value,
+  onChange,
+}: {
+  options: { value: T; label: string }[];
+  value: T;
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div className="flex bg-[#1E1F20] rounded-full p-1">
+      {options.map((opt) => (
+        <button
+          key={opt.value}
+          onClick={() => onChange(opt.value)}
+          className={`flex-1 py-2 text-sm font-medium rounded-full transition-all ${
+            value === opt.value
+              ? 'bg-purple-600 text-white shadow-sm'
+              : 'text-gray-400 hover:text-gray-200'
+          }`}
+        >
+          {opt.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function SectionHeader({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="px-1 pb-2 pt-6 text-[11px] font-bold text-gray-500 uppercase tracking-wider">
+      {children}
+    </p>
+  );
+}
+
+function SectionFooter({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="px-1 pt-2 pb-1 text-[12px] text-gray-500 leading-relaxed">
+      {children}
+    </p>
+  );
+}
+
+function Card({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="bg-[#1E1F20] rounded-2xl overflow-hidden">
+      {children}
+    </div>
+  );
+}
+
+function CardRow({
+  onClick,
+  children,
+}: {
+  onClick?: () => void;
+  children: React.ReactNode;
+}) {
+  const Tag = onClick ? 'button' : 'div';
+  return (
+    <Tag
+      onClick={onClick}
+      className="w-full flex items-center justify-between px-4 py-3.5 text-left hover:bg-white/[0.03] transition-colors"
+    >
+      {children}
+    </Tag>
+  );
+}
+
+function CardDivider() {
+  return <div className="h-px bg-white/[0.06] mx-4" />;
+}
+
+function Radio({ active }: { active: boolean }) {
+  return (
+    <div
+      className={`w-[22px] h-[22px] rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
+        active ? 'border-purple-500 bg-purple-500' : 'border-gray-600'
+      }`}
+    >
+      {active && <div className="w-2 h-2 rounded-full bg-white" />}
+    </div>
+  );
+}
+
+// ── QR Pairing views ────────────────────────────────────────────────────────────────
+
+function ShowQrView() {
+  const [svg, setSvg] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    invoke<string>('get_qr_pair_svg')
+      .then(setSvg)
+      .catch((e) => setError(String(e)));
+  }, []);
+
+  if (error) {
+    return <p className="text-xs text-red-400 text-center py-4">❌ {error}</p>;
+  }
+
+  if (!svg) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <QrCode size={48} className="text-gray-600 animate-pulse" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-4">
+      <div
+        className="bg-white rounded-xl p-3"
+        dangerouslySetInnerHTML={{ __html: svg }}
+      />
+      <p className="text-xs text-gray-500 text-center">
+        Open the app on your phone and scan this QR code to link.
+      </p>
+    </div>
+  );
+}
+
+function ScanView({ onPaired, isAndroid }: { onPaired: () => void; isAndroid: boolean }) {
+  const [status, setStatus] = useState<'idle' | 'scanning' | 'pairing' | 'done' | 'error'>('idle');
+  const [error, setError] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  async function pairWithPayload(raw: string) {
+    let parsed: { address: string; hash_key: string };
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error('Invalid QR code — not a valid pairing code.');
+    }
+    if (!parsed.address || !parsed.hash_key) {
+      throw new Error('Invalid QR code — missing address or hash key.');
+    }
+    setStatus('pairing');
+    // Try the original LAN address first.
+    // On Android emulator the host is 10.0.2.2, so fall back to that if LAN fails.
+    try {
+      await invoke('pair_from_qr', { address: parsed.address, hashKey: parsed.hash_key });
+    } catch (e) {
+      if (!isAndroid) throw e;
+      const emulatorAddress = parsed.address.replace(/^[\d.]+/, '10.0.2.2');
+      if (emulatorAddress === parsed.address) throw e;
+      await invoke('pair_from_qr', { address: emulatorAddress, hashKey: parsed.hash_key });
+    }
+    setStatus('done');
+    onPaired();
+  }
+
+  async function handleImageFile(file: File) {
+    setStatus('scanning');
+    setError('');
+    try {
+      const bitmap = await createImageBitmap(file);
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(bitmap, 0, 0);
+      const imageData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height);
+      if (!code) throw new Error('No QR code detected in image.');
+      await pairWithPayload(code.data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setStatus('error');
+    }
+  }
+
+  async function handleScan() {
+    setStatus('scanning');
+    setError('');
+    try {
+      const result = await scan({ formats: [Format.QRCode], windowed: false });
+      await pairWithPayload(result.content);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setStatus('error');
+    }
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-4">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        style={{ display: 'none' }}
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleImageFile(f); e.target.value = ''; }}
+      />
+
+      {status === 'idle' && (
+        <div className="flex flex-col items-center gap-3 w-full">
+          <button
+            onClick={handleScan}
+            className="flex items-center gap-2 px-6 py-3 rounded-xl bg-purple-600 text-sm font-medium text-white hover:bg-purple-500 transition-colors"
+          >
+            <Camera size={16} />
+            Scan QR Code
+          </button>
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#2C2C2C] text-sm text-gray-300 hover:bg-[#383838] transition-colors"
+          >
+            <ImagePlus size={15} />
+            Import from image
+          </button>
+        </div>
+      )}
+
+      {status === 'scanning' && (
+        <p className="text-sm text-gray-400 animate-pulse">Opening camera…</p>
+      )}
+
+      {status === 'pairing' && (
+        <p className="text-sm text-gray-400 animate-pulse">Linking device…</p>
+      )}
+
+      {status === 'error' && (
+        <div className="flex flex-col items-center gap-3">
+          <p className="text-xs text-red-400 text-center">❌ {error}</p>
+          <div className="flex gap-2">
+            <button
+              onClick={handleScan}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#2C2C2C] text-sm text-gray-200 hover:bg-[#383838] transition-colors"
+            >
+              <Camera size={14} />
+              Try again
+            </button>
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#2C2C2C] text-sm text-gray-200 hover:bg-[#383838] transition-colors"
+            >
+              <ImagePlus size={14} />
+              Image
+            </button>
+          </div>
+        </div>
+      )}
+
+      <p className="text-xs text-gray-500 text-center">
+        Scan live or import a screenshot of the QR code.
+      </p>
+    </div>
+  );
+}
+
+// ── Main component ──────────────────────────────────────────────────────────────────
+
+export function SettingsScreen({ model, availableModels, onModelChange, onBack }: SettingsScreenProps) {
+  const [tab, setTab] = useState<SettingsTab>('general');
+  const [showQrPair, setShowQrPair] = useState(false);
+  const [showModelSelect, setShowModelSelect] = useState(false);
+
+  const [activeMemTab, setActiveMemTab] = useState<MemoryFile>('core.md');
   const [fileContent, setFileContent] = useState('');
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState('');
+  const { session, refresh } = useSession();
+  const isAndroid = session?.device.device_type === 'android';
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load file content when tab changes
   useEffect(() => {
     setDirty(false);
     setSaveMsg('');
-    invoke<string>('get_memory_file', { filename: activeTab })
+    invoke<string>('get_memory_file', { filename: activeMemTab })
       .then((content) => setFileContent(content))
       .catch(() => setFileContent(''));
-  }, [activeTab]);
+  }, [activeMemTab]);
 
   async function handleSave() {
     setSaving(true);
     try {
-      await invoke('set_memory_file', { filename: activeTab, content: fileContent });
+      await invoke('set_memory_file', { filename: activeMemTab, content: fileContent });
       setDirty(false);
       setSaveMsg('Saved');
       setTimeout(() => setSaveMsg(''), 2000);
@@ -71,9 +326,38 @@ export function SettingsScreen({ model, availableModels, onModelChange, onBack }
 
   return (
     <div className="flex flex-col h-screen bg-[#131314] text-[#E3E3E3]">
-      {showLinkHash && <LinkHashModal onClose={() => setShowLinkHash(false)} />}
-      {showGenerateHash && <GenerateHashModal onClose={() => setShowGenerateHash(false)} />}
-      {showQrPair && <QrPairModal onClose={() => setShowQrPair(false)} />}
+      {showQrPair && (
+        <Modal title={isAndroid ? 'Scan QR to Link' : 'Show QR to Link'} onClose={() => setShowQrPair(false)}>
+          {isAndroid ? (
+            <ScanView onPaired={() => { refresh(); setShowQrPair(false); }} isAndroid={isAndroid} />
+          ) : (
+            <ShowQrView />
+          )}
+        </Modal>
+      )}
+      {showModelSelect && (
+        <Modal title="Select Model" onClose={() => setShowModelSelect(false)}>
+          {availableModels.length === 0 ? (
+            <p className="text-sm text-gray-500 text-center py-4">No models found — is Ollama running?</p>
+          ) : (
+            <div className="flex flex-col -mx-5">
+              {availableModels.map((m, i) => (
+                <div key={m}>
+                  {i > 0 && <CardDivider />}
+                  <button
+                    onClick={() => { onModelChange(m); setShowModelSelect(false); }}
+                    className="w-full flex items-center justify-between px-5 py-3.5 text-left hover:bg-white/[0.03] transition-colors"
+                  >
+                    <p className="text-[15px]">{m}</p>
+                    <Radio active={m === model} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </Modal>
+      )}
+
       {/* Header */}
       <div className="flex items-center gap-3 px-2 py-3 border-b border-[#2C2C2C]">
         <button
@@ -85,166 +369,123 @@ export function SettingsScreen({ model, availableModels, onModelChange, onBack }
         <h1 className="text-lg font-semibold">Settings</h1>
       </div>
 
-      {/* Content */}
+      {/* Segment tabs */}
+      <div className="px-4 pb-3">
+        <SegmentControl
+          options={[
+            { value: 'general' as const, label: 'General' },
+            { value: 'memory' as const, label: 'Memory' },
+          ]}
+          value={tab}
+          onChange={setTab}
+        />
+      </div>
+
+      {/* Scrollable content */}
       <div className="flex-1 min-h-0 overflow-y-auto px-4 custom-scrollbar">
         <div className="max-w-2xl mx-auto pb-12">
-          {/* Section: Model */}
-          <div className="mt-6">
-            <p className="px-2 pb-2 text-xs font-semibold text-gray-400 uppercase tracking-widest">
-              Model
-            </p>
-
-            <div className="bg-[#1E1F20] border border-[#2C2C2C] rounded-2xl overflow-hidden shadow-sm">
-              <button
-                onClick={() => setModelOpen((v) => !v)}
-                className="w-full flex items-center justify-between px-4 py-4 text-sm hover:bg-[#252526] transition-colors"
-              >
-                <span className="text-gray-200 font-medium">Active model</span>
-                <span className="flex items-center gap-2 text-gray-400 font-mono text-xs bg-[#2C2C2C]/50 px-2 py-1 rounded-md">
-                  <span className="truncate max-w-[160px]">{model || 'None'}</span>
-                  <ChevronDown
-                    size={14}
-                    className={`shrink-0 transition-transform ${modelOpen ? 'rotate-180' : ''}`}
-                  />
-                </span>
-              </button>
-
-              {modelOpen && (
-                <div className="bg-[#1A1A1B]">
-                  <div className="h-px bg-[#2C2C2C] mx-4" />
-                  {availableModels.length === 0 ? (
-                    <p className="px-4 py-4 text-sm text-gray-500 text-center">
-                      No models found — is Ollama running?
-                    </p>
-                  ) : (
-                    <div className="py-2">
-                      {availableModels.map((m) => (
-                        <button
-                          key={m}
-                          onClick={() => { onModelChange(m); setModelOpen(false); }}
-                          className="w-full flex items-center justify-between px-4 py-3 text-sm font-mono transition-colors hover:bg-[#252526]/80"
-                        >
-                          <span className={m === model ? 'text-purple-400 font-semibold' : 'text-gray-400 hover:text-gray-300'}>{m}</span>
-                          {m === model && <Check size={16} className="text-purple-400 shrink-0" />}
-                        </button>
-                      ))}
+          {tab === 'general' ? (
+            <>
+              {/* Model */}
+              <SectionHeader>Model</SectionHeader>
+              <Card>
+                <CardRow onClick={() => setShowModelSelect(true)}>
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-purple-500/15 flex items-center justify-center">
+                      <Cpu size={18} className="text-purple-400" />
                     </div>
+                    <div>
+                      <p className="text-[15px]">Active model</p>
+                      <p className="text-[12px] text-gray-500 mt-0.5 font-mono">{model || 'None selected'}</p>
+                    </div>
+                  </div>
+                  <ChevronRight size={18} className="text-gray-500 shrink-0" />
+                </CardRow>
+              </Card>
+              <SectionFooter>
+                Models are loaded from your local Ollama instance.
+              </SectionFooter>
+
+              {/* Session */}
+              <SectionHeader>Session</SectionHeader>
+              <Card>
+                <CardRow onClick={() => setShowQrPair(true)}>
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-purple-500/15 flex items-center justify-center">
+                      <QrCode size={18} className="text-purple-400" />
+                    </div>
+                    <div>
+                      <p className="text-[15px]">Pair with QR code</p>
+                      <p className="text-[12px] text-gray-500 mt-0.5">Scan or display a QR code to link devices</p>
+                    </div>
+                  </div>
+                  <ChevronRight size={18} className="text-gray-500 shrink-0" />
+                </CardRow>
+              </Card>
+              <SectionFooter>
+                Pair devices to sync sessions automatically.
+              </SectionFooter>
+            </>
+          ) : (
+            <>
+              {/* Memory sub-tabs */}
+              <div className="pt-2 pb-4">
+                <SegmentControl
+                  options={MEMORY_TABS.map((t) => ({ value: t.file, label: t.label }))}
+                  value={activeMemTab}
+                  onChange={setActiveMemTab}
+                />
+              </div>
+
+              <Card>
+                <div className="px-4 py-3">
+                  <p className="text-[13px] text-gray-400 leading-relaxed">
+                    {MEMORY_TABS.find((t) => t.file === activeMemTab)?.desc}
+                  </p>
+                </div>
+              </Card>
+
+              <div className="mt-3">
+                <Card>
+                  <div className="p-3">
+                    <textarea
+                      ref={textareaRef}
+                      value={fileContent}
+                      onChange={(e) => { setFileContent(e.target.value); setDirty(true); setSaveMsg(''); }}
+                      className="w-full h-64 bg-[#131314] border border-[#2C2C2C] rounded-xl px-4 py-3 text-sm font-mono text-gray-300 focus:outline-none focus:ring-1 focus:ring-purple-500/50 resize-none leading-relaxed transition-all"
+                      spellCheck={false}
+                      placeholder={`No content in ${activeMemTab}`}
+                    />
+                  </div>
+                </Card>
+              </div>
+
+              {(dirty || saveMsg) && (
+                <div className="mt-3 flex justify-end">
+                  {dirty && (
+                    <button
+                      onClick={handleSave}
+                      disabled={saving}
+                      className="flex items-center gap-1.5 text-sm font-medium text-white bg-purple-600 hover:bg-purple-500 px-4 py-2 rounded-full transition-colors disabled:opacity-50"
+                    >
+                      <Save size={14} />
+                      {saving ? 'Saving…' : 'Save changes'}
+                    </button>
+                  )}
+                  {saveMsg && !dirty && (
+                    <span className="text-sm font-medium text-green-400 bg-green-500/10 px-4 py-2 rounded-full">
+                      {saveMsg}
+                    </span>
                   )}
                 </div>
               )}
-            </div>
 
-            <p className="px-2 pt-2 text-xs text-gray-500">
-              Models are loaded from your local Ollama instance.
-            </p>
-          </div>
-
-          {/* Section: Session */}
-          <div className="mt-8">
-            <p className="px-2 pb-2 text-xs font-semibold text-gray-400 uppercase tracking-widest">
-              Session
-            </p>
-            <div className="bg-[#1E1F20] border border-[#2C2C2C] rounded-2xl overflow-hidden shadow-sm">
-              <button
-                onClick={() => setShowLinkHash(true)}
-                className="w-full flex items-center justify-between px-4 py-4 text-sm hover:bg-[#252526] transition-colors group"
-              >
-                <span className="text-gray-200 font-medium group-hover:text-white transition-colors">Link hash key</span>
-                <span className="text-xs text-gray-500 group-hover:text-gray-400 transition-colors bg-[#2C2C2C]/30 px-2 py-1 rounded">Paste key to join</span>
-              </button>
-              <div className="h-px bg-[#2C2C2C] mx-4" />
-              <button
-                onClick={() => setShowGenerateHash(true)}
-                className="w-full flex items-center justify-between px-4 py-4 text-sm hover:bg-[#252526] transition-colors group"
-              >
-                <span className="text-gray-200 font-medium group-hover:text-white transition-colors">Generate hash key</span>
-                <span className="text-xs text-gray-500 group-hover:text-gray-400 transition-colors bg-[#2C2C2C]/30 px-2 py-1 rounded">Create shareable key</span>
-              </button>
-              <div className="h-px bg-[#2C2C2C] mx-4" />
-              <button
-                onClick={() => setShowQrPair(true)}
-                className="w-full flex items-center justify-between px-4 py-4 text-sm hover:bg-[#252526] transition-colors group"
-              >
-                <span className="text-gray-200 font-medium group-hover:text-white transition-colors">Pair with QR code</span>
-                <span className="flex items-center gap-1.5 text-xs text-purple-400 group-hover:text-purple-300 transition-colors bg-purple-500/10 px-2 py-1 rounded">
-                  <QrCode size={12} />
-                  Scan or show
-                </span>
-              </button>
-            </div>
-            <p className="px-2 pt-2 text-xs text-gray-500">
-              Share your key to link devices and sync sessions.
-            </p>
-          </div>
-
-          {/* Section: Memory */}
-          <div className="mt-8 mb-4 flex flex-col">
-            {/* Header row */}
-            <div className="flex items-center justify-between px-2 pb-2">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest">
-                Memory
-              </p>
-              {dirty && (
-                <button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="flex items-center gap-1.5 text-xs font-medium text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 px-2.5 py-1 rounded-full transition-colors disabled:opacity-50"
-                >
-                  <Save size={12} />
-                  {saving ? 'Saving…' : 'Save changes'}
-                </button>
-              )}
-              {saveMsg && !dirty && (
-                <span className="text-xs font-medium text-green-400 bg-green-500/10 px-2.5 py-1 rounded-full">{saveMsg}</span>
-              )}
-            </div>
-
-            <div className="bg-[#1E1F20] border border-[#2C2C2C] rounded-2xl overflow-hidden shadow-sm flex flex-col">
-              {/* Tab bar */}
-              <div className="flex border-b border-[#2C2C2C] bg-[#1a1b1c]">
-                {MEMORY_TABS.map(({ file, label }) => (
-                  <button
-                    key={file}
-                    onClick={() => setActiveTab(file)}
-                    className={`flex-1 px-4 py-3 text-sm font-medium transition-colors relative ${
-                      activeTab === file
-                        ? 'text-purple-400'
-                        : 'text-gray-500 hover:text-gray-300 hover:bg-[#252526]/50'
-                    }`}
-                  >
-                    {label}
-                    {activeTab === file && (
-                      <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-purple-500" />
-                    )}
-                  </button>
-                ))}
-              </div>
-
-              {/* Description */}
-              <div className="px-4 py-3 bg-[#1e1f20] border-b border-[#2C2C2C]/50">
-                <p className="text-xs text-gray-400 leading-relaxed">
-                  {MEMORY_TABS.find((t) => t.file === activeTab)?.desc}
-                </p>
-              </div>
-
-              {/* Editable textarea */}
-              <div className="p-4">
-                <textarea
-                  ref={textareaRef}
-                  value={fileContent}
-                  onChange={(e) => { setFileContent(e.target.value); setDirty(true); setSaveMsg(''); }}
-                  className="w-full h-64 bg-[#141415] border border-[#2C2C2C] rounded-xl px-4 py-3 text-sm font-mono text-gray-300 focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/50 resize-none leading-relaxed transition-all shadow-inner custom-scrollbar"
-                  spellCheck={false}
-                  placeholder={`No content in ${activeTab}`}
-                />
-              </div>
-            </div>
-
-            <p className="px-2 pt-3 text-xs text-gray-500 pb-8">
-              The LLM can read and write these files using the{' '}
-              <span className="font-mono bg-[#2C2C2C]/50 px-1 py-0.5 rounded text-gray-400">memory</span> tool during any conversation.
-            </p>
-          </div>
+              <SectionFooter>
+                The LLM can read and write these files using the{' '}
+                <span className="font-mono bg-white/5 px-1 py-0.5 rounded text-gray-400">memory</span> tool.
+              </SectionFooter>
+            </>
+          )}
         </div>
       </div>
     </div>
