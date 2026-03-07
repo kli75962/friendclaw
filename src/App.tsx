@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useOllamaChat } from './hooks/useOllamaChat';
 import { TopBar } from './components/TopBar';
@@ -6,6 +6,8 @@ import { WelcomeScreen } from './components/WelcomeScreen';
 import { ChatMessage } from './components/ChatMessage';
 import { InputBar } from './components/InputBar';
 import { SettingsScreen } from './components/SettingsScreen';
+import { SideMenu } from './components/SideMenu';
+import type { ChatMeta, Message } from './types';
 
 const DEFAULT_MODEL = 'kimi-k2.5:cloud';
 const MODEL_STORAGE_KEY = 'phoneclaw_model';
@@ -17,12 +19,66 @@ function App() {
   );
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [showSettings, setShowSettings] = useState(false);
-  const { messages, isThinking, agentStatus, error, handleSend } = useOllamaChat(model);
+  const [showMenu, setShowMenu] = useState(false);
+
+  // Chat management
+  const [chatMetas, setChatMetas] = useState<ChatMeta[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+  const [initMessages, setInitMessages] = useState<Message[]>([]);
+
+  // Load chat list on mount
+  useEffect(() => {
+    invoke<ChatMeta[]>('list_chats').then(setChatMetas).catch(() => {});
+  }, []);
+
+  const onChatCreated = useCallback((id: string, title: string) => {
+    const createdAt = new Date().toISOString();
+    invoke('create_chat', { id, title, createdAt }).catch(() => {});
+    const meta: ChatMeta = { id, title, createdAt };
+    setActiveChatId(id);
+    setChatMetas((prev) => [meta, ...prev]);
+  }, []);
+
+  const onSave = useCallback((id: string, messages: Message[]) => {
+    invoke('save_chat_messages', { id, messages }).catch(() => {});
+  }, []);
+
+  const { messages, isThinking, agentStatus, error, handleSend } = useOllamaChat(
+    model, activeChatId, initMessages, onChatCreated, onSave,
+  );
   const scrollRef = useRef<HTMLDivElement>(null);
 
   function handleModelChange(m: string) {
     setModel(m);
     localStorage.setItem(MODEL_STORAGE_KEY, m);
+  }
+
+  function startNewChat() {
+    setActiveChatId(null);
+    setInitMessages([]);
+    setShowMenu(false);
+  }
+
+  function switchChat(id: string) {
+    invoke<Message[]>('load_chat_messages', { id })
+      .then((msgs) => {
+        setActiveChatId(id);
+        setInitMessages(msgs);
+      })
+      .catch(() => {
+        setActiveChatId(id);
+        setInitMessages([]);
+      });
+    setShowMenu(false);
+  }
+
+  function deleteChat(id: string) {
+    invoke('delete_chat', { id }).catch(() => {});
+    setChatMetas((prev) => prev.filter((m) => m.id !== id));
+    if (activeChatId === id) {
+      setActiveChatId(null);
+      setInitMessages([]);
+    }
   }
 
   // Fetch available Ollama models on first load
@@ -66,7 +122,16 @@ function App() {
 
   return (
     <div className="flex flex-col h-screen bg-[#131314] text-[#E3E3E3] font-sans">
-      <TopBar model={model} onSettingsOpen={() => setShowSettings(true)} />
+      <SideMenu
+        open={showMenu}
+        onClose={() => setShowMenu(false)}
+        onNewChat={startNewChat}
+        chats={chatMetas}
+        activeChatId={activeChatId}
+        onSelectChat={switchChat}
+        onDeleteChat={deleteChat}
+      />
+      <TopBar model={model} onMenuOpen={() => setShowMenu((v) => !v)} onSettingsOpen={() => setShowSettings(true)} />
 
       {/* Main Content Area */}
       <div className="flex-1 min-h-0 overflow-y-auto px-4 custom-scrollbar">

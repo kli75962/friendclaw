@@ -1,13 +1,12 @@
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 // ── Memory file names ────────────────────────────────────────────────────────
 
 pub const CORE_FILE: &str = "core.md";
-pub const CONVERSATIONS_FILE: &str = "conversations.jsonl";
-pub const ALLOWED_FILES: &[&str] = &[CORE_FILE, CONVERSATIONS_FILE];
+pub const ALLOWED_FILES: &[&str] = &[CORE_FILE];
 
 const DEFAULT_CORE: &str = "\
 # Core Memory
@@ -40,7 +39,6 @@ pub fn bootstrap_memory(app: &AppHandle) {
     let dir = memory_dir(app);
     let _ = std::fs::create_dir_all(&dir);
     ensure_file(&dir.join(CORE_FILE), DEFAULT_CORE);
-    ensure_file(&dir.join(CONVERSATIONS_FILE), "");
 }
 
 fn ensure_file(path: &PathBuf, default: &str) {
@@ -185,72 +183,6 @@ pub fn run_memory_command(
     }
 }
 
-/// Append one conversation summary entry to `conversations.jsonl` and keep only
-/// the last 50. Designed to be called from `tokio::spawn` (takes owned `dir`).
-pub fn append_conversation(dir: PathBuf, user_msg: String, reply: String) {
-    const MAX_CONVS: usize = 50;
-
-    let path = dir.join(CONVERSATIONS_FILE);
-    let existing = std::fs::read_to_string(&path).unwrap_or_default();
-    let mut lines: Vec<String> = existing
-        .lines()
-        .filter(|l| !l.trim().is_empty())
-        .map(String::from)
-        .collect();
-
-    let ts = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
-    // Truncate by char count to safely handle CJK characters
-    let user_trunc: String = user_msg.chars().take(300).collect();
-    let reply_trunc: String = reply.chars().take(500).collect();
-
-    let entry = serde_json::json!({
-        "ts": ts,
-        "user": user_trunc,
-        "reply": reply_trunc,
-    });
-    lines.push(entry.to_string());
-
-    // Keep only the last MAX_CONVS entries
-    let start = lines.len().saturating_sub(MAX_CONVS);
-    let output = lines[start..].join("\n") + "\n";
-    let _ = std::fs::write(&path, output);
-}
-
-/// Read the last `limit` conversation entries formatted for system prompt injection.
-pub fn read_recent_conversations(app: &AppHandle, limit: usize) -> String {
-    let path = memory_dir(app).join(CONVERSATIONS_FILE);
-    let content = std::fs::read_to_string(&path).unwrap_or_default();
-
-    let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
-    let recent_start = lines.len().saturating_sub(limit);
-    let recent = &lines[recent_start..];
-
-    if recent.is_empty() {
-        return String::new();
-    }
-
-    let parts: Vec<String> = recent
-        .iter()
-        .filter_map(|line| {
-            let val = serde_json::from_str::<serde_json::Value>(line).ok()?;
-            let user = val["user"].as_str().unwrap_or("");
-            let reply = val["reply"].as_str().unwrap_or("");
-            if user.is_empty() { return None; }
-            Some(format!("User: {user}\nAssistant: {reply}"))
-        })
-        .collect();
-
-    if parts.is_empty() {
-        return String::new();
-    }
-
-    format!("[RECENT CONVERSATIONS — use for context if relevant]\n{}", parts.join("\n---\n"))
-}
-
 // ── System-prompt helpers ────────────────────────────────────────────────────
 
 /// Wrap core.md content for injection into the system prompt.
@@ -261,4 +193,93 @@ pub fn build_core_prompt(core: &str) -> String {
         return String::new();
     }
     format!("[CORE MEMORY — always apply these facts in your responses]\n{trimmed}")
+}
+
+// ── Multi-chat storage ───────────────────────────────────────────────────────
+
+/// Metadata for a single chat session.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatMeta {
+    pub id: String,
+    pub title: String,
+    pub created_at: String,
+}
+
+fn chats_dir(app: &AppHandle) -> PathBuf {
+    memory_dir(app).join("chats")
+}
+
+fn chats_index_path(app: &AppHandle) -> PathBuf {
+    chats_dir(app).join("_index.json")
+}
+
+/// Returns true if `id` is a safe UUID-ish string (alphanumeric + hyphens only).
+fn is_safe_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_alphanumeric() || c == '-')
+}
+
+/// List all chats ordered newest-first (as stored in the index).
+pub fn list_chats(app: &AppHandle) -> Vec<ChatMeta> {
+    let text = std::fs::read_to_string(chats_index_path(app)).unwrap_or_default();
+    serde_json::from_str(&text).unwrap_or_default()
+}
+
+/// Load the messages for a specific chat. Returns an empty vec on any error.
+pub fn load_chat_messages(app: &AppHandle, id: &str) -> Vec<serde_json::Value> {
+    if !is_safe_id(id) {
+        return vec![];
+    }
+    let path = chats_dir(app).join(format!("{id}.json"));
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    serde_json::from_str(&text).unwrap_or_default()
+}
+
+/// Register a new chat in the index (messages file is created empty).
+/// Call once when the chat is first created.
+pub fn create_chat(app: &AppHandle, id: &str, title: &str, created_at: &str) -> Result<(), String> {
+    if !is_safe_id(id) {
+        return Err("Invalid chat id".to_string());
+    }
+    let dir = chats_dir(app);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    // Write empty messages file
+    let msg_path = dir.join(format!("{id}.json"));
+    std::fs::write(&msg_path, "[]").map_err(|e| e.to_string())?;
+
+    // Prepend to index
+    let mut metas = list_chats(app);
+    if !metas.iter().any(|m| m.id == id) {
+        metas.insert(0, ChatMeta { id: id.to_string(), title: title.to_string(), created_at: created_at.to_string() });
+        let json = serde_json::to_string(&metas).map_err(|e| e.to_string())?;
+        std::fs::write(chats_index_path(app), json).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Overwrite the messages file for an existing chat.
+pub fn save_chat_messages(app: &AppHandle, id: &str, messages: Vec<serde_json::Value>) -> Result<(), String> {
+    if !is_safe_id(id) {
+        return Err("Invalid chat id".to_string());
+    }
+    let dir = chats_dir(app);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join(format!("{id}.json"));
+    let json = serde_json::to_string(&messages).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())
+}
+
+/// Remove a chat from the index and delete its messages file.
+pub fn delete_chat(app: &AppHandle, id: &str) -> Result<(), String> {
+    if !is_safe_id(id) {
+        return Err("Invalid chat id".to_string());
+    }
+    let dir = chats_dir(app);
+    let msg_path = dir.join(format!("{id}.json"));
+    let _ = std::fs::remove_file(&msg_path);
+    let mut metas = list_chats(app);
+    metas.retain(|m| m.id != id);
+    let json = serde_json::to_string(&metas).map_err(|e| e.to_string())?;
+    std::fs::write(chats_index_path(app), json).map_err(|e| e.to_string())
 }

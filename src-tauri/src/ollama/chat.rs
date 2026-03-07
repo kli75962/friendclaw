@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter};
 
-use crate::memory::{append_conversation, bootstrap_memory, build_core_prompt, execute_memory_write, memory_dir, read_core, read_recent_conversations, run_memory_command};
+use crate::memory::{bootstrap_memory, build_core_prompt, execute_memory_write, memory_dir, read_core, run_memory_command};
 use crate::phone::{execute_tool, get_installed_apps, hide_overlay, is_cancelled, show_overlay};
 use crate::loadskills::{build_skills_prompt, load_tool_schemas};
 
@@ -174,11 +174,7 @@ pub async fn chat_ollama(
 
     // Build the static part of the system prompt once (skills + installed apps).
     // Core memory is re-read fresh every round (“prepareCall” pattern).
-    let base_prompt = {
-        let prompt = build_base_prompt(&app).await;
-        let recent = read_recent_conversations(&app, 5);
-        if recent.is_empty() { prompt } else { format!("{prompt}\n\n{recent}") }
-    };
+    let base_prompt = build_base_prompt(&app).await;
 
     // Conversation history without system message — system is prepended fresh each round.
     let mut conversation: Vec<OllamaMessage> = messages.into_iter().collect();
@@ -264,17 +260,6 @@ pub async fn chat_ollama(
                 },
             )
             .map_err(|e| e.to_string())?;
-
-            // Append conversation summary in background (fire-and-forget)
-            let user_msg = conversation.iter()
-                .find(|m| m.role == "user")
-                .map(|m| m.content.chars().take(300).collect::<String>())
-                .unwrap_or_default();
-            let reply_text = final_msg.content.chars().take(500).collect::<String>();
-            let conv_dir = memory_dir(&app);
-            tokio::spawn(async move {
-                append_conversation(conv_dir, user_msg, reply_text);
-            });
 
             return Ok(());
         }

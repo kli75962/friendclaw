@@ -7,7 +7,7 @@ mod session;
 mod bridge;
 mod queue;
 
-use memory::{get_memory_file, set_memory_file};
+use memory::{get_memory_file, set_memory_file, list_chats, load_chat_messages, create_chat, save_chat_messages, delete_chat};
 use ollama::{chat_ollama, list_models};
 use session::{add_paired_device, get_session, remove_paired_device, set_device_label, set_session_hash_key};
 use bridge::{check_peer_online, discover_and_pair, get_all_peer_status, get_local_address, get_qr_pair_svg, pair_from_qr, send_to_device, start_bridge_server, start_peer_monitor};
@@ -55,6 +55,11 @@ pub fn run() {
             list_models,
             get_memory_file,
             set_memory_file,
+            list_chats,
+            load_chat_messages,
+            create_chat,
+            save_chat_messages,
+            delete_chat,
             // session / pairing
             get_session,
             set_device_label,

@@ -1,3 +1,10 @@
+/** Metadata for a saved chat session. */
+export interface ChatMeta {
+  id: string;
+  title: string;
+  createdAt: string;
+}
+
 /** A single message in the Ollama chat conversation. */
 export interface Message {
   role: 'user' | 'assistant' | 'system' | 'tool';

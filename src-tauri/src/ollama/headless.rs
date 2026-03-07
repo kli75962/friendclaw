@@ -6,8 +6,8 @@ use serde_json::Value;
 use tauri::AppHandle;
 
 use crate::memory::{
-    append_conversation, bootstrap_memory, build_core_prompt, execute_memory_write,
-    memory_dir, read_core, read_recent_conversations, run_memory_command,
+    bootstrap_memory, build_core_prompt, execute_memory_write,
+    memory_dir, read_core, run_memory_command,
 };
 use crate::phone::{execute_tool, get_installed_apps};
 use crate::loadskills::{build_skills_prompt, load_tool_schemas};
@@ -149,11 +149,7 @@ pub async fn run_headless(
     let tool_schemas = load_tool_schemas();
     bootstrap_memory(app);
 
-    let base_prompt = {
-        let prompt = build_base_prompt(app).await;
-        let recent = read_recent_conversations(app, 5);
-        if recent.is_empty() { prompt } else { format!("{prompt}\n\n{recent}") }
-    };
+    let base_prompt = build_base_prompt(app).await;
 
     let mut history = conversation;
 
@@ -176,18 +172,6 @@ pub async fn run_headless(
         let tool_calls = final_msg.tool_calls.take().unwrap_or_default();
 
         if tool_calls.is_empty() {
-            // Done — save conversation in background and return
-            let user_msg = history
-                .iter()
-                .find(|m| m.role == "user")
-                .map(|m| m.content.chars().take(300).collect::<String>())
-                .unwrap_or_default();
-            let reply = final_msg.content.chars().take(500).collect::<String>();
-            let conv_dir = memory_dir(app);
-            tokio::spawn(async move {
-                append_conversation(conv_dir, user_msg, reply);
-            });
-
             return Ok(final_msg.content);
         }
 

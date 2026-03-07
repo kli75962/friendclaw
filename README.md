@@ -28,3 +28,6 @@ build android:
 
   rm -rf src-tauri/gen/android/app/build dist
   bun run tauri android build
+
+permission:
+ src-tauri/gen/android/app/src/main/androidManifest.xml
