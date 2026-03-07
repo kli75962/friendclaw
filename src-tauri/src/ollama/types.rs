@@ -86,13 +86,33 @@ pub struct AgentStatusPayload {
     pub message: String,
 }
 
-/// Return the Ollama API base URL for the current platform.
-/// - Android emulator: uses the special `10.0.2.2` host that maps to the PC running the emulator.
+/// Return the Ollama host for the current platform.
+/// - Android: uses the first paired device's address (the desktop running Ollama).
 /// - Desktop: uses localhost.
-pub fn ollama_chat_url() -> &'static str {
+pub fn ollama_host(app: &tauri::AppHandle) -> String {
     #[cfg(target_os = "android")]
-    return "http://10.0.2.2:11434/api/chat";
-
+    {
+        if let Some(cfg) = crate::session::store::load(app) {
+            if let Some(peer) = cfg.paired_devices.first() {
+                // peer.address is "ip:bridge_port", extract the ip part
+                let ip = peer.address.split(':').next().unwrap_or(&peer.address);
+                return format!("http://{ip}:11434");
+            }
+        }
+        // fallback for emulator
+        "http://10.0.2.2:11434".to_string()
+    }
     #[cfg(not(target_os = "android"))]
-    "http://127.0.0.1:11434/api/chat"
+    {
+        let _ = app;
+        "http://127.0.0.1:11434".to_string()
+    }
+}
+
+pub fn ollama_chat_url(app: &tauri::AppHandle) -> String {
+    format!("{}/api/chat", ollama_host(app))
+}
+
+pub fn ollama_tags_url(app: &tauri::AppHandle) -> String {
+    format!("{}/api/tags", ollama_host(app))
 }

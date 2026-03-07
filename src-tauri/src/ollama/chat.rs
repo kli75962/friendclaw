@@ -78,7 +78,7 @@ async fn stream_once(
     };
 
     let response = ollama_client()
-        .post("http://10.0.2.2:11434/api/chat")
+        .post(super::types::ollama_chat_url(app))
         .json(&body)
         .send()
         .await

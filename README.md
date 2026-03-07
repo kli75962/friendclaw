@@ -20,3 +20,11 @@ For Android development, run:
 
 debug:
   adb logcat | grep PhoneControlPlugin
+
+build android:
+  bun run tauri android init
+  bun run tauri android build
+  src-tauri/gen/android/app/build/outputs/apk/release/
+
+  rm -rf src-tauri/gen/android/app/build dist
+  bun run tauri android build

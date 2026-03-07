@@ -126,35 +126,80 @@ function Radio({ active }: { active: boolean }) {
 
 function ShowQrView() {
   const [svg, setSvg] = useState('');
+  const [address, setAddress] = useState('');
   const [error, setError] = useState('');
+  const [fetchingPublicIp, setFetchingPublicIp] = useState(false);
 
+  // Load LAN address once on mount
   useEffect(() => {
-    invoke<string>('get_qr_pair_svg')
-      .then(setSvg)
-      .catch((e) => setError(String(e)));
+    invoke<string>('get_local_address')
+      .then(setAddress)
+      .catch(() => setAddress(''));
   }, []);
 
-  if (error) {
-    return <p className="text-xs text-red-400 text-center py-4">❌ {error}</p>;
-  }
+  // Regenerate QR whenever address changes (debounced)
+  useEffect(() => {
+    if (!address) return;
+    setSvg('');
+    setError('');
+    const timer = setTimeout(() => {
+      invoke<string>('get_qr_pair_svg', { customAddress: address })
+        .then(setSvg)
+        .catch((e) => setError(String(e)));
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [address]);
 
-  if (!svg) {
-    return (
-      <div className="flex items-center justify-center py-8">
-        <QrCode size={48} className="text-gray-600 animate-pulse" />
-      </div>
-    );
+  async function fetchPublicIp() {
+    setFetchingPublicIp(true);
+    try {
+      const resp = await fetch('https://api.ipify.org?format=text');
+      const ip = (await resp.text()).trim();
+      const port = address.split(':')[1] ?? '';
+      setAddress(port ? `${ip}:${port}` : ip);
+    } catch {
+      setError('Could not fetch public IP.');
+    } finally {
+      setFetchingPublicIp(false);
+    }
   }
 
   return (
     <div className="flex flex-col items-center gap-4">
-      <div
-        className="bg-white rounded-xl p-3"
-        dangerouslySetInnerHTML={{ __html: svg }}
-      />
-      <p className="text-xs text-gray-500 text-center">
-        Open the app on your phone and scan this QR code to link.
-      </p>
+      {svg ? (
+        <div
+          className="bg-white rounded-xl p-3"
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
+      ) : error ? (
+        <p className="text-xs text-red-400 text-center py-4">❌ {error}</p>
+      ) : (
+        <div className="flex items-center justify-center py-8">
+          <QrCode size={48} className="text-gray-600 animate-pulse" />
+        </div>
+      )}
+
+      <div className="w-full flex flex-col gap-2">
+        <p className="text-xs text-gray-400">Address encoded in QR</p>
+        <div className="flex gap-2">
+          <input
+            value={address}
+            onChange={(e) => setAddress(e.target.value)}
+            placeholder="ip:port"
+            className="flex-1 bg-[#2C2C2C] text-gray-200 text-sm px-3 py-2 rounded-xl outline-none focus:ring-1 focus:ring-purple-500"
+          />
+          <button
+            onClick={fetchPublicIp}
+            disabled={fetchingPublicIp}
+            className="px-3 py-2 rounded-xl bg-purple-600/20 text-purple-400 text-xs hover:bg-purple-600/30 transition-colors disabled:opacity-50"
+          >
+            {fetchingPublicIp ? '…' : 'Public IP'}
+          </button>
+        </div>
+        <p className="text-xs text-gray-500">
+          On mobile data? Click <span className="text-gray-300">Public IP</span> and ensure port forwarding is set up on your router.
+        </p>
+      </div>
     </div>
   );
 }
@@ -216,7 +261,8 @@ function ScanView({ onPaired, isAndroid }: { onPaired: () => void; isAndroid: bo
       const result = await scan({ formats: [Format.QRCode], windowed: false });
       await pairWithPayload(result.content);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const msg = e instanceof Error ? e.message : typeof e === 'object' ? JSON.stringify(e) : String(e);
+      setError(msg);
       setStatus('error');
     }
   }

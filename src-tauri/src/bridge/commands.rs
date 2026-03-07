@@ -186,12 +186,22 @@ pub async fn pair_from_qr(app: AppHandle, address: String, hash_key: String) -> 
 }
 
 /// Generate an SVG QR code encoding this device's address + hash key for pairing.
+/// Pass `custom_address` (e.g. a public IP) to override the detected LAN address.
 #[tauri::command]
-pub fn get_qr_pair_svg(app: AppHandle) -> Result<String, String> {
+pub fn get_qr_pair_svg(app: AppHandle, custom_address: Option<String>) -> Result<String, String> {
     let cfg = store::bootstrap(&app);
-    let ip = local_ip_address::local_ip().map_err(|e| format!("Cannot detect LAN IP: {e}"))?;
+    let address = match custom_address.filter(|a| !a.trim().is_empty()) {
+        Some(addr) => {
+            validate_address(&addr)?;
+            addr
+        }
+        None => {
+            let ip = local_ip_address::local_ip().map_err(|e| format!("Cannot detect LAN IP: {e}"))?;
+            format!("{ip}:{}", cfg.bridge_port)
+        }
+    };
     let payload = serde_json::json!({
-        "address": format!("{ip}:{}", cfg.bridge_port),
+        "address": address,
         "hash_key": cfg.hash_key,
     });
     let data = payload.to_string();

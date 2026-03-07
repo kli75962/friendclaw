@@ -10,7 +10,7 @@ export function TopBar({ model, onSettingsOpen }: TopBarProps) {
   return (
     <div className="flex justify-between items-center p-4 sticky top-0 bg-[#131314] z-10">
       {/* Left spacer to keep model name centred */}
-      <div className="w-9" />
+      <div className="w-9"/>
 
       <span className="text-sm text-gray-500 font-mono truncate max-w-[160px]">{model}</span>
 
