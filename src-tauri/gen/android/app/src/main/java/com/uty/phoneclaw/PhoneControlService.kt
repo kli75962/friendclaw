@@ -75,14 +75,36 @@ class PhoneControlService : AccessibilityService() {
     /** Cached handler for the main thread — reused by tap/swipe feedback. */
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    /** Cached WindowManager — lifetime matches the service, so caching is safe. */
+    private val windowManager by lazy { getSystemService(WINDOW_SERVICE) as WindowManager }
+
+    /**
+     * Pre-allocated Paint objects for swipe feedback (accessed on main thread only).
+     * Avoids two Paint allocations per swipe in the agentic loop.
+     */
+    private val swipeLinePaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color       = Color.argb(200, 100, 200, 255)
+            strokeWidth = 7.dpToPx().toFloat()
+            style       = Paint.Style.STROKE
+            strokeCap   = Paint.Cap.ROUND
+        }
+    }
+    private val swipeArrowPaint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(220, 100, 200, 255)
+            style = Paint.Style.FILL
+        }
+    }
+
     /**
      * Show a draggable red recording-dot indicator floating above all apps.
      * Drag to reposition; tap to cancel the LLM agent loop.
      */
     fun showOverlay(onCancel: (() -> Unit)?) {
-        if (overlayView != null) return   // already visible
+        if (overlayView != null) return
 
-        val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        val wm = windowManager
         val sizePx   = 56.dpToPx()
         val innerPx  = 30.dpToPx()
         val strokePx =  3.dpToPx()
@@ -172,8 +194,7 @@ class PhoneControlService : AccessibilityService() {
     fun hideOverlay() {
         overlayView?.let {
             try {
-                val wm = getSystemService(WINDOW_SERVICE) as WindowManager
-                wm.removeView(it)
+                windowManager.removeView(it)
             } catch (_: Exception) {}
         }
         overlayView   = null
@@ -188,7 +209,7 @@ class PhoneControlService : AccessibilityService() {
      */
     fun showTapFeedback(x: Float, y: Float) {
         mainHandler.post {
-            val wm = getSystemService(WINDOW_SERVICE) as WindowManager
+            val wm = windowManager
             val sizePx = 40.dpToPx()
 
             val ripple = View(this).apply {
@@ -236,25 +257,16 @@ class PhoneControlService : AccessibilityService() {
      */
     fun showSwipeFeedback(startX: Float, startY: Float, endX: Float, endY: Float) {
         mainHandler.post {
-            val wm  = getSystemService(WINDOW_SERVICE) as WindowManager
+            val wm = windowManager
             val dm  = resources.displayMetrics
             val sw  = dm.widthPixels
             val sh  = dm.heightPixels
 
-            val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color       = Color.argb(200, 100, 200, 255)
-                strokeWidth = 7.dpToPx().toFloat()
-                style       = Paint.Style.STROKE
-                strokeCap   = Paint.Cap.ROUND
-            }
-            val arrowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.argb(220, 100, 200, 255)
-                style = Paint.Style.FILL
-            }
-
+            // Pre-compute arrowhead length once (avoids dpToPx call inside onDraw).
+            val arrowLen = 22.dpToPx().toFloat()
             val lineView = object : View(this) {
                 override fun onDraw(canvas: Canvas) {
-                    canvas.drawLine(startX, startY, endX, endY, linePaint)
+                    canvas.drawLine(startX, startY, endX, endY, swipeLinePaint)
 
                     // Arrowhead at endX/endY
                     val dx  = endX - startX
@@ -263,7 +275,6 @@ class PhoneControlService : AccessibilityService() {
                     if (len > 0f) {
                         val ux = dx / len
                         val uy = dy / len
-                        val arrowLen = 22.dpToPx().toFloat()
                         val angle    = 0.45  // radians (~26°)
                         val ax1 = endX - arrowLen * (ux * cos(-angle) - uy * sin(-angle)).toFloat()
                         val ay1 = endY - arrowLen * (ux * sin(-angle) + uy * cos(-angle)).toFloat()
@@ -275,7 +286,7 @@ class PhoneControlService : AccessibilityService() {
                             lineTo(ax2, ay2)
                             close()
                         }
-                        canvas.drawPath(arrowPath, arrowPaint)
+                        canvas.drawPath(arrowPath, swipeArrowPaint)
                     }
                 }
             }
@@ -331,7 +342,7 @@ class PhoneControlService : AccessibilityService() {
     fun getScreenContentDeep(): String = buildScreenContent(showHiddenAreas = true)
 
     private fun buildScreenContent(showHiddenAreas: Boolean): String {
-        val builder = StringBuilder()
+        val builder = StringBuilder(4096)
         val processedWindowIds = mutableSetOf<Int>()
 
         windows?.forEach { window ->
@@ -458,7 +469,6 @@ class PhoneControlService : AccessibilityService() {
         focused ?: return false
 
         if (clearFirst) {
-            val args = Bundle()
             focused.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION,
                 Bundle().apply {
                     putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)

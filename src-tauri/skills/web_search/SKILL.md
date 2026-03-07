@@ -34,5 +34,5 @@ Extract the relevant answer from the snippets. If the snippets are insufficient,
 
 - Always **cite what you found** when answering the user — don't present search results as your own knowledge.
 - If the first search is unhelpful, **refine the query** (add a year, remove ambiguous words, try synonyms).
-- Do not call `web_search` more than **3 times** per user request to avoid unnecessary delay.
+- Do not call `web_search` more than **15 times** per user request to avoid unnecessary delay.
 ```

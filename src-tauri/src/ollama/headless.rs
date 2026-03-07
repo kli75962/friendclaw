@@ -15,7 +15,7 @@ use crate::web_search::web_search;
 
 use super::ollama_client;
 use super::types::{
-    OllamaChatRequest, OllamaChunk, OllamaMessage, OllamaToolCall,
+    OllamaChunk, OllamaMessage, OllamaToolCall,
 };
 
 const MAX_TOOL_ROUNDS: usize = 200;
@@ -73,16 +73,12 @@ fn prepare_system(base: &str, core: &str) -> String {
 
 async fn stream_once_headless(
     app: &AppHandle,
-    messages: &[OllamaMessage],
+    system_msg: &OllamaMessage,
+    history: &[OllamaMessage],
     tool_schemas: &[Value],
     model: &str,
 ) -> Result<OllamaMessage, String> {
-    let body = OllamaChatRequest {
-        model: model.to_string(),
-        messages: messages.to_vec(),
-        stream: true,
-        tools: tool_schemas.to_vec(),
-    };
+    let body = super::types::OllamaRoundRequest::new(model, system_msg, history, true, tool_schemas);
 
     let response = ollama_client()
         .post(super::types::ollama_chat_url(app))
@@ -162,12 +158,8 @@ pub async fn run_headless(
             tool_calls: None,
         };
 
-        let mut round_messages = Vec::with_capacity(history.len() + 1);
-        round_messages.push(system_msg);
-        round_messages.extend(history.iter().cloned());
-
         let mut final_msg =
-            stream_once_headless(app, &round_messages, &tool_schemas, model).await?;
+            stream_once_headless(app, &system_msg, &history, tool_schemas, model).await?;
 
         let tool_calls = final_msg.tool_calls.take().unwrap_or_default();
 

@@ -48,18 +48,18 @@ function App() {
   );
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  function handleModelChange(m: string) {
+  const handleModelChange = useCallback((m: string) => {
     setModel(m);
     localStorage.setItem(MODEL_STORAGE_KEY, m);
-  }
+  }, []);
 
-  function startNewChat() {
+  const startNewChat = useCallback(() => {
     setActiveChatId(null);
     setInitMessages([]);
     setShowMenu(false);
-  }
+  }, []);
 
-  function switchChat(id: string) {
+  const switchChat = useCallback((id: string) => {
     invoke<Message[]>('load_chat_messages', { id })
       .then((msgs) => {
         setActiveChatId(id);
@@ -70,16 +70,16 @@ function App() {
         setInitMessages([]);
       });
     setShowMenu(false);
-  }
+  }, []);
 
-  function deleteChat(id: string) {
+  const deleteChat = useCallback((id: string) => {
     invoke('delete_chat', { id }).catch(() => {});
     setChatMetas((prev) => prev.filter((m) => m.id !== id));
     if (activeChatId === id) {
       setActiveChatId(null);
       setInitMessages([]);
     }
-  }
+  }, [activeChatId]);
 
   // Fetch available Ollama models on first load
   useEffect(() => {
@@ -90,9 +90,11 @@ function App() {
         // Auto-select first model if saved/default model is not available
         const saved = localStorage.getItem(MODEL_STORAGE_KEY);
         if (names.length > 0 && saved && !names.includes(saved)) {
-          handleModelChange(names[0]);
+          setModel(names[0]);
+          localStorage.setItem(MODEL_STORAGE_KEY, names[0]);
         } else if (names.length > 0 && !saved && !names.includes(DEFAULT_MODEL)) {
-          handleModelChange(names[0]);
+          setModel(names[0]);
+          localStorage.setItem(MODEL_STORAGE_KEY, names[0]);
         }
       })
       .catch(() => {
@@ -104,10 +106,15 @@ function App() {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isThinking, agentStatus]);
 
-  const onSend = (text: string) => {
+  const onSend = useCallback((text: string) => {
     handleSend(text);
     setInput('');
-  };
+  }, [handleSend]);
+
+  const handleMenuOpen = useCallback(() => setShowMenu((v) => !v), []);
+  const handleMenuClose = useCallback(() => setShowMenu(false), []);
+  const handleSettingsOpen = useCallback(() => setShowSettings(true), []);
+  const handleSettingsBack = useCallback(() => setShowSettings(false), []);
 
   if (showSettings) {
     return (
@@ -115,7 +122,7 @@ function App() {
         model={model}
         availableModels={availableModels}
         onModelChange={handleModelChange}
-        onBack={() => setShowSettings(false)}
+        onBack={handleSettingsBack}
       />
     );
   }
@@ -124,28 +131,29 @@ function App() {
     <div className="flex flex-col h-screen bg-[#131314] text-[#E3E3E3] font-sans">
       <SideMenu
         open={showMenu}
-        onClose={() => setShowMenu(false)}
+        onClose={handleMenuClose}
         onNewChat={startNewChat}
         chats={chatMetas}
         activeChatId={activeChatId}
         onSelectChat={switchChat}
         onDeleteChat={deleteChat}
       />
-      <TopBar model={model} onMenuOpen={() => setShowMenu((v) => !v)} onSettingsOpen={() => setShowSettings(true)} />
+      <TopBar model={model} onMenuOpen={handleMenuOpen} onSettingsOpen={handleSettingsOpen} />
 
       {/* Main Content Area */}
       <div className="flex-1 min-h-0 overflow-y-auto px-4 custom-scrollbar">
-        {messages.length === 0 && <WelcomeScreen onSend={onSend} />}
-
-        <div className="max-w-3xl mx-auto space-y-8 mt-4">
-          {messages.map((msg, idx) => (
-            <ChatMessage
-              key={idx}
-              message={msg}
-              isLastMessage={idx === messages.length - 1}
-              isThinking={isThinking}
-            />
-          ))}
+        {messages.length === 0 ? (
+          <WelcomeScreen onSend={onSend} />
+        ) : (
+          <div className="max-w-3xl mx-auto space-y-8 mt-4">
+            {messages.map((msg, idx) => (
+              <ChatMessage
+                key={idx}
+                message={msg}
+                isLastMessage={idx === messages.length - 1}
+                isThinking={isThinking}
+              />
+            ))}
 
           {/* Agent tool-execution status */}
           {agentStatus && (
@@ -162,7 +170,8 @@ function App() {
           )}
 
           <div ref={scrollRef} />
-        </div>
+          </div>
+        )}
       </div>
 
       <InputBar

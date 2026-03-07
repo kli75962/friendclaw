@@ -27,6 +27,9 @@ pub async fn execute_tool(app: &AppHandle, name: &str, args: &Value) -> ToolResu
     }
 }
 
+#[cfg(not(target_os = "android"))]
+static PHONE_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+
 /// Desktop: forward a phone tool call to the first paired Android device via POST /tool.
 #[cfg(not(target_os = "android"))]
 async fn forward_to_android(app: &AppHandle, name: &str, args: &Value) -> ToolResult {
@@ -50,10 +53,12 @@ async fn forward_to_android(app: &AppHandle, name: &str, args: &Value) -> ToolRe
         "tool_args": args,
     });
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()
-        .unwrap();
+    let client = PHONE_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()
+            .unwrap()
+    });
 
     match client.post(&url).json(&body).send().await {
         Ok(resp) if resp.status().is_success() => {

@@ -1,6 +1,5 @@
 use futures_util::StreamExt;
 use serde_json::Value;
-use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter};
 
 use crate::memory::{bootstrap_memory, build_core_prompt, execute_memory_write, memory_dir, read_core, run_memory_command};
@@ -8,20 +7,11 @@ use crate::phone::{execute_tool, get_installed_apps, hide_overlay, is_cancelled,
 use crate::loadskills::{build_skills_prompt, load_tool_schemas};
 
 use super::types::{
-    AgentStatusPayload, OllamaChatRequest, OllamaChunk, OllamaMessage, OllamaToolCall,
+    AgentStatusPayload, OllamaChunk, OllamaMessage, OllamaToolCall,
     StreamPayload,
 };
 
 const MAX_TOOL_ROUNDS: usize = 200;
-
-/// A single shared HTTP client for all Ollama requests.
-/// Reusing it preserves the TCP connection pool across streaming rounds,
-/// avoiding repeated TLS handshakes (which is critical in tight agent loops).
-static OLLAMA_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-
-fn ollama_client() -> &'static reqwest::Client {
-    OLLAMA_CLIENT.get_or_init(reqwest::Client::new)
-}
 
 /// Build the static part of the system prompt (skills + installed apps).
 /// Called once per chat. Core memory is injected separately each round via prepareCall.
@@ -42,7 +32,7 @@ async fn build_base_prompt(app: &AppHandle) -> String {
     format!(
         "You are PhoneClaw, an AI agent that controls an Android phone on behalf of the user.\n\
         Be helpful, concise, and proactive. Break tasks into tool calls and execute them step by step.\n\
-        Plain text only. NEVER use raw markdown symbols (`#`, `##`, `**`, `*`, `---`).
+        Plain text only. NEVER EVER use raw markdown symbols (`#`, `##`, `**`, `*`, `---`).
         \n\n{skills}\n\n[INSTALLED APPS]\n{apps}",
         skills = build_skills_prompt(),
         apps = apps_list,
@@ -66,18 +56,14 @@ fn prepare_system(base: &str, core: &str) -> String {
 /// Tool_calls are accumulated across ALL chunks to support models that stream them.
 async fn stream_once(
     app: &AppHandle,
-    messages: &[OllamaMessage],
+    system_msg: &OllamaMessage,
+    conversation: &[OllamaMessage],
     tool_schemas: &[Value],
     model: &str,
 ) -> Result<OllamaMessage, String> {
-    let body = OllamaChatRequest {
-        model: model.to_string(),
-        messages: messages.to_vec(),
-        stream: true,
-        tools: tool_schemas.to_vec(),
-    };
+    let body = super::types::OllamaRoundRequest::new(model, system_msg, conversation, true, tool_schemas);
 
-    let response = ollama_client()
+    let response = super::ollama_client()
         .post(super::types::ollama_chat_url(app))
         .json(&body)
         .send()
@@ -206,12 +192,7 @@ pub async fn chat_ollama(
             content: system_content,
             tool_calls: None,
         };
-        // Prepend system message just for this round’s request
-        let mut round_messages = Vec::with_capacity(conversation.len() + 1);
-        round_messages.push(system_msg);
-        round_messages.extend(conversation.iter().cloned());
-
-        let final_msg = match stream_once(&app, &round_messages, &tool_schemas, &model).await {
+        let final_msg = match stream_once(&app, &system_msg, &conversation, tool_schemas, &model).await {
             Ok(msg) => msg,
             Err(e) if e == "CANCELLED" => {
                 hide_overlay(&app);

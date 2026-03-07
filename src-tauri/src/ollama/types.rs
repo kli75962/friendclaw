@@ -55,15 +55,59 @@ where
     Ok(v)
 }
 
-/// Request body sent to the Ollama `/api/chat` endpoint.
+
+// ── Zero-copy request builder for per-round LLM calls ───────────────────────
+
+/// Serializes [system_msg, history...] as a contiguous JSON array without
+/// cloning any message. Used instead of building a temporary Vec each round.
+struct RoundMessages<'a> {
+    system: &'a OllamaMessage,
+    history: &'a [OllamaMessage],
+}
+
+impl serde::Serialize for RoundMessages<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut seq = serializer.serialize_seq(Some(1 + self.history.len()))?;
+        seq.serialize_element(self.system)?;
+        for msg in self.history {
+            seq.serialize_element(msg)?;
+        }
+        seq.end()
+    }
+}
+
+fn tools_is_empty<T>(s: &&[T]) -> bool {
+    s.is_empty()
+}
+
+/// Borrowed request type — avoids cloning messages and tool schemas on every
+/// LLM round in the agentic loop. Use instead of `OllamaChatRequest` when the
+/// system message and conversation are already in separate owned structures.
 #[derive(Serialize)]
-pub struct OllamaChatRequest {
-    pub model: String,
-    pub messages: Vec<OllamaMessage>,
+pub struct OllamaRoundRequest<'a> {
+    pub model: &'a str,
+    messages: RoundMessages<'a>,
     pub stream: bool,
-    /// Ollama tool schemas (passed only when tools are available).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub tools: Vec<Value>,
+    #[serde(skip_serializing_if = "tools_is_empty")]
+    pub tools: &'a [Value],
+}
+
+impl<'a> OllamaRoundRequest<'a> {
+    pub fn new(
+        model: &'a str,
+        system: &'a OllamaMessage,
+        history: &'a [OllamaMessage],
+        stream: bool,
+        tools: &'a [Value],
+    ) -> Self {
+        Self {
+            model,
+            messages: RoundMessages { system, history },
+            stream,
+            tools,
+        }
+    }
 }
 
 /// A single NDJSON chunk from the Ollama streaming response.

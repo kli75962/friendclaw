@@ -1,7 +1,8 @@
+import { memo } from 'react';
 import { Menu, PenSquare, Trash2 } from 'lucide-react';
 import type { SideMenuProps } from '../types';
 
-export function SideMenu({ open, onClose, onNewChat, chats, activeChatId, onSelectChat, onDeleteChat }: SideMenuProps) {
+export const SideMenu = memo(function SideMenu({ open, onClose, onNewChat, chats, activeChatId, onSelectChat, onDeleteChat }: SideMenuProps) {
   if (!open) return null;
 
   return (
@@ -65,4 +66,4 @@ export function SideMenu({ open, onClose, onNewChat, chats, activeChatId, onSele
       </div>
     </>
   );
-}
+});

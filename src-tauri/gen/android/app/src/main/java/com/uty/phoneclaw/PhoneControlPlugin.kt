@@ -26,6 +26,12 @@ class PhoneControlPlugin(private val activity: Activity) : Plugin(activity) {
          * Rust polls this via isCancelled() and resets it on read.
          */
         val cancelRequested = AtomicBoolean(false)
+
+        // Cache the installed apps list for 60 s to avoid repeated PackageManager queries
+        // on every user message (build_base_prompt fires once per chat_ollama invocation).
+        @Volatile private var appCacheTime = 0L
+        @Volatile private var appCacheValue: JSObject? = null
+        private const val APP_CACHE_TTL_MS = 60_000L
     }
 
     // ----- App list -----
@@ -36,8 +42,17 @@ class PhoneControlPlugin(private val activity: Activity) : Plugin(activity) {
      */
     @Command
     fun getInstalledApps(invoke: Invoke) {
+        val now = System.currentTimeMillis()
+        val cached = appCacheValue
+        if (cached != null && now - appCacheTime < APP_CACHE_TTL_MS) {
+            invoke.resolve(cached)
+            return
+        }
+
         val pm = activity.packageManager
-        val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+        // Flag 0: GET_META_DATA is not needed — flags, label, and packageName are all
+        // available in the base ApplicationInfo without loading full manifest metadata.
+        val apps = pm.getInstalledApplications(0)
 
         val result = JSArray()
         for (app in apps) {
@@ -51,6 +66,8 @@ class PhoneControlPlugin(private val activity: Activity) : Plugin(activity) {
         }
 
         val response = JSObject().apply { put("apps", result) }
+        appCacheTime = now
+        appCacheValue = response
         invoke.resolve(response)
     }
 

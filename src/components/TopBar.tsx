@@ -1,8 +1,9 @@
+import { memo } from 'react';
 import { Settings, Menu } from 'lucide-react';
 import type { TopBarProps } from '../types';
 
 /** Fixed top navigation bar. */
-export function TopBar({ model, onMenuOpen, onSettingsOpen }: TopBarProps) {
+export const TopBar = memo(function TopBar({ model, onMenuOpen, onSettingsOpen }: TopBarProps) {
   return (
     <div className="flex justify-between items-center p-4 sticky top-0 bg-[#131314] z-10">
       <button
@@ -22,4 +23,4 @@ export function TopBar({ model, onMenuOpen, onSettingsOpen }: TopBarProps) {
       </button>
     </div>
   );
-}
+});

@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { Fragment, memo, useMemo } from 'react';
 import { Sparkles } from 'lucide-react';
 import type { ChatMessageProps } from '../types';
 
@@ -68,10 +68,13 @@ function formatAssistantText(raw: string): string {
  * - Assistant messages: plain text, left-aligned with a Sparkles avatar
  *   A blinking cursor is shown on the last assistant message while streaming.
  */
-export function ChatMessage({ message, isLastMessage, isThinking }: ChatMessageProps) {
+export const ChatMessage = memo(function ChatMessage({ message, isLastMessage, isThinking }: ChatMessageProps) {
   const isUser = message.role === 'user';
   const isStreaming = isThinking && isLastMessage && !isUser;
-  const displayContent = isUser ? message.content : formatAssistantText(message.content);
+  const displayContent = useMemo(
+    () => (isUser ? message.content : formatAssistantText(message.content)),
+    [isUser, message.content],
+  );
 
   return (
     <div className={`flex gap-4 ${isUser ? 'flex-row-reverse' : ''}`}>
@@ -106,4 +109,4 @@ export function ChatMessage({ message, isLastMessage, isThinking }: ChatMessageP
       </div>
     </div>
   );
-}
+});
