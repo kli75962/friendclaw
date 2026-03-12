@@ -45,7 +45,7 @@ function App() {
     invoke('save_chat_messages', { id, messages }).catch(() => {});
   }, []);
 
-  const { messages, isThinking, agentStatus, error, handleSend } = useOllamaChat(
+  const { messages, isThinking, agentStatus, error, handleSend, handleRetry, handleStop } = useOllamaChat(
     model, activeChatId, initMessages, onChatCreated, onSave,
   );
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -171,14 +171,21 @@ function App() {
           <WelcomeScreen onSend={onSend} />
         ) : (
           <div className="max-w-3xl mx-auto space-y-8 mt-4">
-            {messages.map((msg, idx) => (
-              <ChatMessage
-                key={idx}
-                message={msg}
-                isLastMessage={idx === messages.length - 1}
-                isThinking={isThinking}
-              />
-            ))}
+            {(() => {
+              const lastUserMsgIdx = messages.reduce(
+                (acc, m, i) => (m.role === 'user' ? i : acc),
+                -1,
+              );
+              return messages.map((msg, idx) => (
+                <ChatMessage
+                  key={idx}
+                  message={msg}
+                  isLastMessage={idx === messages.length - 1}
+                  isThinking={isThinking}
+                  onRetry={idx === lastUserMsgIdx && !isThinking ? handleRetry : undefined}
+                />
+              ));
+            })()}
 
           {/* Agent tool-execution status */}
           {agentStatus && (
@@ -207,6 +214,7 @@ function App() {
         onChange={setInput}
         onSend={onSend}
         onSttToggle={handleSttToggle}
+        onStop={handleStop}
       />
     </div>
   );

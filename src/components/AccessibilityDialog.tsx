@@ -2,12 +2,14 @@ import { useState, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 
 const DONT_SHOW_KEY = 'phoneclaw_accessibility_dont_show';
+const IS_ANDROID = navigator.userAgent.includes('Android');
 
 export function AccessibilityDialog() {
   const [visible, setVisible] = useState(false);
   const [dontShow, setDontShow] = useState(false);
 
   const check = useCallback(() => {
+    if (!IS_ANDROID) return;
     if (localStorage.getItem(DONT_SHOW_KEY) === 'true') return;
     invoke<{ enabled: boolean }>('check_accessibility_enabled')
       .then(({ enabled }) => {
@@ -36,8 +38,8 @@ export function AccessibilityDialog() {
 
   return (
     <div
-      className="fixed inset-0 flex items-center justify-center bg-black/60"
-      style={{ zIndex: 80, padding: '0 32px' }}
+      className="fixed inset-0 flex items-center justify-center bg-black/60 "
+      style={{ zIndex: 80, padding: '0 32px'}}
     >
       <div className="w-full max-w-sm bg-[#1E1F20] rounded-2xl shadow-2xl overflow-hidden">
         <div style={{ padding: '28px 20px 20px' }}>

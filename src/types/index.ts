@@ -11,6 +11,7 @@ export interface ChatMessageProps {
   message: Message;
   isLastMessage: boolean;
   isThinking: boolean;
+  onRetry?: () => void;
 }
 
 export interface InputBarProps {
@@ -21,6 +22,7 @@ export interface InputBarProps {
   onChange: (value: string) => void;
   onSend: (text: string) => void;
   onSttToggle: () => void;
+  onStop: () => void;
 }
 
 export interface ModalProps {
@@ -56,6 +58,8 @@ export interface UseOllamaChatReturn {
   agentStatus: string | null;
   error: string | null;
   handleSend: (text: string) => Promise<void>;
+  handleStop: () => void;
+  handleRetry: () => Promise<void>;
 }
 
 export interface TopBarProps {

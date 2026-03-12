@@ -10,7 +10,7 @@ mod stt;
 mod secrets;
 
 use memory::{get_memory_file, set_memory_file, list_chats, load_chat_messages, create_chat, save_chat_messages, delete_chat};
-use ollama::{chat_ollama, list_models};
+use ollama::{cancel_chat, chat_ollama, list_models};
 use stt::{stt_start, stt_stop};
 use secrets::{store_secret, load_secret};
 use session::{add_paired_device, get_session, remove_paired_device, set_device_label, set_session_hash_key};
@@ -113,6 +113,8 @@ pub fn run() {
             // phone
             check_accessibility_enabled,
             open_accessibility_settings,
+            // chat control
+            cancel_chat,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

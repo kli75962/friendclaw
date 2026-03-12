@@ -58,28 +58,11 @@ export function useOllamaChat(
     };
   }, []);
 
-  const handleSend = async (text: string) => {
-    if (!text.trim() || isThinking) return;
-
-    // Create a new chat ID on first message of a new chat
-    if (currentChatIdRef.current === null) {
-      const newId = crypto.randomUUID();
-      currentChatIdRef.current = newId;
-      internalCreateRef.current = true;
-      onChatCreatedRef.current(newId, text.slice(0, 50));
-    }
-
-    const activeChatId = currentChatIdRef.current!;
-
+  // Shared stream runner — sets up listeners and invokes chat_ollama.
+  // Caller is responsible for updating messages state + messagesRef before calling.
+  const runChat = async (historyMessages: Message[], activeChatId: string) => {
     setError(null);
     setAgentStatus(null);
-
-    const userMessage: Message = { role: 'user', content: text };
-    const updatedMessages = [...messagesRef.current, userMessage];
-    const withPlaceholder = [...updatedMessages, { role: 'assistant' as const, content: '' }];
-
-    setMessages(withPlaceholder);
-    messagesRef.current = withPlaceholder;
     setIsThinking(true);
 
     try {
@@ -114,9 +97,6 @@ export function useOllamaChat(
         setAgentStatus(event.payload.message);
       });
 
-      const historyMessages = updatedMessages.filter(
-        (m) => m.role === 'user' || m.role === 'assistant',
-      );
       await invoke('chat_ollama', { messages: historyMessages, model });
     } catch (err) {
       setIsThinking(false);
@@ -133,6 +113,62 @@ export function useOllamaChat(
     }
   };
 
-  return { messages, isThinking, agentStatus, error, handleSend };
+  const handleSend = async (text: string) => {
+    if (!text.trim() || isThinking) return;
+
+    // Create a new chat ID on first message of a new chat
+    if (currentChatIdRef.current === null) {
+      const newId = crypto.randomUUID();
+      currentChatIdRef.current = newId;
+      internalCreateRef.current = true;
+      onChatCreatedRef.current(newId, text.slice(0, 50));
+    }
+
+    const activeChatId = currentChatIdRef.current!;
+
+    const userMessage: Message = { role: 'user', content: text };
+    const updatedMessages = [...messagesRef.current, userMessage];
+    const withPlaceholder = [...updatedMessages, { role: 'assistant' as const, content: '' }];
+
+    setMessages(withPlaceholder);
+    messagesRef.current = withPlaceholder;
+
+    const historyMessages = updatedMessages.filter(
+      (m) => m.role === 'user' || m.role === 'assistant',
+    );
+    await runChat(historyMessages, activeChatId);
+  };
+
+  const handleRetry = async () => {
+    if (isThinking) return;
+
+    const activeChatId = currentChatIdRef.current;
+    if (!activeChatId) return;
+
+    // Find the last user message index
+    const lastUserIdx = messagesRef.current.reduce(
+      (acc, m, i) => (m.role === 'user' ? i : acc),
+      -1,
+    );
+    if (lastUserIdx === -1) return;
+
+    // Keep history up to and including the last user message, add empty assistant placeholder
+    const historyUpToUser = messagesRef.current.slice(0, lastUserIdx + 1);
+    const withPlaceholder = [...historyUpToUser, { role: 'assistant' as const, content: '' }];
+
+    setMessages(withPlaceholder);
+    messagesRef.current = withPlaceholder;
+
+    const historyMessages = historyUpToUser.filter(
+      (m) => m.role === 'user' || m.role === 'assistant',
+    );
+    await runChat(historyMessages, activeChatId);
+  };
+
+  const handleStop = () => {
+    invoke('cancel_chat').catch(() => {});
+  };
+
+  return { messages, isThinking, agentStatus, error, handleSend, handleRetry, handleStop };
 }
 

@@ -148,8 +148,10 @@ pub async fn run_headless(
     let base_prompt = build_base_prompt(app).await;
 
     let mut history = conversation;
+    let mut final_result: Result<String, String> =
+        Err(format!("Agent exceeded maximum tool rounds ({MAX_TOOL_ROUNDS})"));
 
-    for _ in 0..MAX_TOOL_ROUNDS {
+    'agent: for _ in 0..MAX_TOOL_ROUNDS {
         let core = read_core(app);
         let system_content = prepare_system(&base_prompt, &core);
         let system_msg = OllamaMessage {
@@ -158,13 +160,21 @@ pub async fn run_headless(
             tool_calls: None,
         };
 
-        let mut final_msg =
-            stream_once_headless(app, &system_msg, &history, tool_schemas, model).await?;
+        let mut final_msg = match
+            stream_once_headless(app, &system_msg, &history, tool_schemas, model).await
+        {
+            Ok(msg) => msg,
+            Err(e) => {
+                final_result = Err(e);
+                break 'agent;
+            }
+        };
 
         let tool_calls = final_msg.tool_calls.take().unwrap_or_default();
 
         if tool_calls.is_empty() {
-            return Ok(final_msg.content);
+            final_result = Ok(final_msg.content);
+            break 'agent;
         }
 
         // Restore tool_calls for history
@@ -236,5 +246,5 @@ pub async fn run_headless(
         }
     }
 
-    Err(format!("Agent exceeded maximum tool rounds ({MAX_TOOL_ROUNDS})"))
+    final_result
 }

@@ -1,5 +1,6 @@
 use futures_util::StreamExt;
 use serde_json::Value;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter};
 
 use crate::memory::{bootstrap_memory, build_core_prompt, execute_memory_write, memory_dir, read_core, run_memory_command};
@@ -12,6 +13,20 @@ use super::types::{
 };
 
 const MAX_TOOL_ROUNDS: usize = 200;
+
+/// Set to true by `cancel_chat` command. Reset to false at the start of each chat_ollama run.
+static CHAT_CANCEL: AtomicBool = AtomicBool::new(false);
+
+/// Tauri command — signal the running chat_ollama loop to stop.
+#[tauri::command]
+pub fn cancel_chat() {
+    CHAT_CANCEL.store(true, Ordering::Relaxed);
+}
+
+/// Returns true if either the overlay cancel button (Android) or the frontend stop button was pressed.
+fn should_cancel(app: &AppHandle) -> bool {
+    CHAT_CANCEL.load(Ordering::Relaxed) || is_cancelled(app)
+}
 
 /// Build the static part of the system prompt (skills + installed apps).
 /// Called once per chat. Core memory is injected separately each round via prepareCall.
@@ -83,8 +98,8 @@ async fn stream_once(
     let mut final_role = "assistant".to_string();
 
     while let Some(chunk_result) = byte_stream.next().await {
-        // Check cancel button on every chunk so the overlay responds immediately
-        if is_cancelled(app) {
+        // Check cancel on every chunk
+        if should_cancel(app) {
             return Err("CANCELLED".to_string());
         }
         let bytes = chunk_result.map_err(|e| format!("Stream error: {e}"))?;
@@ -153,6 +168,9 @@ pub async fn chat_ollama(
     messages: Vec<OllamaMessage>,
     model: String,
 ) -> Result<(), String> {
+    // Reset cancel flag for this run
+    CHAT_CANCEL.store(false, Ordering::Relaxed);
+
     let tool_schemas = load_tool_schemas();
 
     // Bootstrap memory files on first run (no-op if they already exist)
@@ -170,8 +188,8 @@ pub async fn chat_ollama(
 
     // Agentic loop: keep going until the LLM stops issuing tool calls
     for round in 0..MAX_TOOL_ROUNDS {
-        // Check if the user tapped the cancel button on the overlay
-        if is_cancelled(&app) {
+        // Check if the user tapped cancel (overlay button or frontend stop button)
+        if should_cancel(&app) {
             hide_overlay(&app);
             app.emit(
                 "ollama-stream",

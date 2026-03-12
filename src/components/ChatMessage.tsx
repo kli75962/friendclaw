@@ -1,5 +1,5 @@
 import { Fragment, memo, useMemo } from 'react';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, RotateCcw } from 'lucide-react';
 import type { ChatMessageProps } from '../types';
 
 /**
@@ -68,7 +68,7 @@ function formatAssistantText(raw: string): string {
  * - Assistant messages: plain text, left-aligned with a Sparkles avatar
  *   A blinking cursor is shown on the last assistant message while streaming.
  */
-export const ChatMessage = memo(function ChatMessage({ message, isLastMessage, isThinking }: ChatMessageProps) {
+export const ChatMessage = memo(function ChatMessage({ message, isLastMessage, isThinking, onRetry }: ChatMessageProps) {
   const isUser = message.role === 'user';
   const isStreaming = isThinking && isLastMessage && !isUser;
   const displayContent = useMemo(
@@ -77,7 +77,7 @@ export const ChatMessage = memo(function ChatMessage({ message, isLastMessage, i
   );
 
   return (
-    <div className={`flex gap-4 ${isUser ? 'flex-row-reverse' : ''}`}>
+    <div className={`flex gap-4 items-center ${isUser ? 'flex-row-reverse' : ''}`}>
       {/* Avatar — only for assistant */}
       {!isUser && (
         <div className="w-8 h-8 shrink-0 mt-1">
@@ -107,6 +107,17 @@ export const ChatMessage = memo(function ChatMessage({ message, isLastMessage, i
           <span className="inline-block w-[2px] h-[1em] bg-blue-400 ml-0.5 animate-pulse align-middle" />
         )}
       </div>
+
+      {/* Retry button — left of the newest user bubble */}
+      {onRetry && isUser && (
+        <button
+          onClick={onRetry}
+          className="shrink-0 p-1.5 rounded-full text-gray-500 hover:text-gray-300 hover:bg-[#2C2C2C] transition-colors"
+          title="Retry"
+        >
+          <RotateCcw size={15} />
+        </button>
+      )}
     </div>
   );
 });
