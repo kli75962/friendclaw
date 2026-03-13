@@ -360,6 +360,7 @@ export function SettingsScreen({ model, availableModels, onModelChange, onOllama
   const [showQrPair, setShowQrPair] = useState(false);
   const [showModelSelect, setShowModelSelect] = useState(false);
   const [googleApiKey, setGoogleApiKey] = useState('');
+  const [googleSttLanguages, setGoogleSttLanguages] = useState('en-US,yue-Hant-HK,cmn-Hans-CN');
   const [ollamaHost, setOllamaHost] = useState('127.0.0.1');
   const [ollamaPort, setOllamaPort] = useState('11434');
   const [ollamaSaving, setOllamaSaving] = useState(false);
@@ -368,6 +369,10 @@ export function SettingsScreen({ model, availableModels, onModelChange, onOllama
   useEffect(() => {
     invoke<string | null>('load_secret', { key: 'google_api_key' })
       .then((val) => { if (val) setGoogleApiKey(val); })
+      .catch(() => {});
+
+    invoke<string | null>('load_secret', { key: 'google_stt_languages' })
+      .then((val) => { if (val) setGoogleSttLanguages(val); })
       .catch(() => {});
   }, []);
 
@@ -606,12 +611,24 @@ export function SettingsScreen({ model, availableModels, onModelChange, onOllama
                     autoComplete="off"
                     className="bg-[#131314] border border-[#2C2C2C] rounded-xl px-4 py-2.5 text-sm font-mono text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
                   />
+                  <input
+                    value={googleSttLanguages}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setGoogleSttLanguages(value);
+                      invoke('store_secret', { key: 'google_stt_languages', value }).catch(() => {});
+                    }}
+                    placeholder="en-US,yue-Hant-HK,cmn-Hans-CN"
+                    autoComplete="off"
+                    className="bg-[#131314] border border-[#2C2C2C] rounded-xl px-4 py-2.5 text-sm font-mono text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
+                  />
                 </div>
               </Card>
               <SectionFooter>
                 Or set{' '}
                 <span className="font-mono text-gray-300">GOOGLE_API_KEY</span>{' '}
                 in <span className="font-mono text-gray-300">src-tauri/.secrets</span>.
+                Language codes are comma-separated, first is primary.
               </SectionFooter>
                 </>
               )}

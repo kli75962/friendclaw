@@ -83,7 +83,12 @@ export function useStt(onTranscript: (text: string) => void) {
       // ── Desktop: Google Cloud STT via Tauri command ──────────────────────────
       try {
         const apiKey = await invoke<string | null>('load_secret', { key: 'google_api_key' }) ?? undefined;
-        await invoke('stt_start', { apiKey });
+        const rawLanguages = await invoke<string | null>('load_secret', { key: 'google_stt_languages' });
+        const languages = (rawLanguages ?? 'en-US,yue-Hant-HK,cmn-Hans-CN')
+          .split(',')
+          .map((v) => v.trim())
+          .filter(Boolean);
+        await invoke('stt_start', { apiKey, languages });
         isListeningRef.current = true;
         setIsListening(true);
       } catch (err) {

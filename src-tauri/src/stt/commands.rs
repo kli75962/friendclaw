@@ -17,6 +17,8 @@ use super::types::resolve_google_api_key;
 struct SttSession {
     handle: CaptureHandle,
     api_key: String,
+    primary_language: String,
+    alternative_languages: Vec<String>,
 }
 
 static CAPTURE: Mutex<Option<SttSession>> = Mutex::new(None);
@@ -31,7 +33,11 @@ struct SttPartialPayload {
 /// `api_key` overrides GOOGLE_API_KEY from .secrets.
 /// The cpal::Stream is !Send, so it lives inside a dedicated OS thread.
 #[tauri::command]
-pub fn stt_start(app: AppHandle, api_key: Option<String>) -> Result<(), String> {
+pub fn stt_start(
+    app: AppHandle,
+    api_key: Option<String>,
+    languages: Option<Vec<String>>,
+) -> Result<(), String> {
     #[cfg(not(target_os = "android"))]
     {
         use std::sync::mpsc;
@@ -42,6 +48,7 @@ pub fn stt_start(app: AppHandle, api_key: Option<String>) -> Result<(), String> 
         }
 
         let key = resolve_google_api_key(api_key.as_deref())?;
+        let (primary_language, alternative_languages) = parse_stt_languages(languages);
         let (tx, rx) = mpsc::channel::<Result<CaptureHandle, String>>();
 
         std::thread::spawn(move || {
@@ -70,6 +77,8 @@ pub fn stt_start(app: AppHandle, api_key: Option<String>) -> Result<(), String> 
         let recording_arc = handle.recording.clone();
         let sample_rate = handle.sample_rate;
         let key_clone = key.clone();
+        let primary_language_clone = primary_language.clone();
+        let alternative_languages_clone = alternative_languages.clone();
         let app_clone = app.clone();
 
         // Spawn a Tokio task that sends only the NEW audio captured since the last
@@ -93,7 +102,13 @@ pub fn stt_start(app: AppHandle, api_key: Option<String>) -> Result<(), String> 
                     last_sent = buf.len();
                     chunk
                 };
-                if let Ok(text) = transcribe::transcribe(&chunk, sample_rate, &key_clone).await {
+                if let Ok(text) = transcribe::transcribe(
+                    &chunk,
+                    sample_rate,
+                    &key_clone,
+                    &primary_language_clone,
+                    &alternative_languages_clone,
+                ).await {
                     if !text.is_empty() {
                         if !running_transcript.is_empty() {
                             running_transcript.push(' ');
@@ -107,12 +122,17 @@ pub fn stt_start(app: AppHandle, api_key: Option<String>) -> Result<(), String> 
             }
         });
 
-        *guard = Some(SttSession { handle, api_key: key });
+        *guard = Some(SttSession {
+            handle,
+            api_key: key,
+            primary_language,
+            alternative_languages,
+        });
         Ok(())
     }
     #[cfg(target_os = "android")]
     {
-        let _ = (app, api_key);
+        let _ = (app, api_key, languages);
         Err("Native capture not available on Android".to_string())
     }
 }
@@ -120,7 +140,7 @@ pub fn stt_start(app: AppHandle, api_key: Option<String>) -> Result<(), String> 
 /// Stop capture and return the final transcript of the complete recording.
 #[tauri::command]
 pub async fn stt_stop() -> Result<String, String> {
-    let (samples, sample_rate, api_key) = {
+    let (samples, sample_rate, api_key, primary_language, alternative_languages) = {
         let mut guard = CAPTURE.lock().map_err(|e| e.to_string())?;
         let session = guard.take().ok_or("Not recording")?;
 
@@ -131,14 +151,54 @@ pub async fn stt_stop() -> Result<String, String> {
             std::mem::take(&mut *buf)
         };
 
-        (samples, session.handle.sample_rate, session.api_key)
+        (
+            samples,
+            session.handle.sample_rate,
+            session.api_key,
+            session.primary_language,
+            session.alternative_languages,
+        )
     };
 
     if samples.is_empty() {
         return Ok(String::new());
     }
 
-    transcribe::transcribe(&samples, sample_rate, &api_key).await
+    transcribe::transcribe(
+        &samples,
+        sample_rate,
+        &api_key,
+        &primary_language,
+        &alternative_languages,
+    ).await
+}
+
+#[cfg(not(target_os = "android"))]
+fn parse_stt_languages(input: Option<Vec<String>>) -> (String, Vec<String>) {
+    let fallback = vec![
+        "en-US".to_string(),
+        "yue-Hant-HK".to_string(),
+        "cmn-Hans-CN".to_string(),
+    ];
+
+    let mut langs = input
+        .unwrap_or(fallback)
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>();
+
+    if langs.is_empty() {
+        langs = vec![
+            "en-US".to_string(),
+            "yue-Hant-HK".to_string(),
+            "cmn-Hans-CN".to_string(),
+        ];
+    }
+
+    let primary = langs.remove(0);
+    let alternatives = langs.into_iter().take(3).collect::<Vec<_>>();
+    (primary, alternatives)
 }
 
 /// Android-only: run one-shot native speech recognition and return transcript text.

@@ -15,7 +15,13 @@ fn to_pcm(samples: &[f32]) -> Vec<u8> {
 
 /// Send accumulated audio to Google Cloud Speech-to-Text v1 and return the transcript.
 /// `api_key` must be a valid Google Cloud API key with Speech-to-Text API enabled.
-pub async fn transcribe(samples: &[f32], sample_rate: u32, api_key: &str) -> Result<String, String> {
+pub async fn transcribe(
+    samples: &[f32],
+    sample_rate: u32,
+    api_key: &str,
+    primary_language: &str,
+    alternative_languages: &[String],
+) -> Result<String, String> {
     if samples.is_empty() {
         return Ok(String::new());
     }
@@ -23,13 +29,20 @@ pub async fn transcribe(samples: &[f32], sample_rate: u32, api_key: &str) -> Res
     let pcm = to_pcm(samples);
     let audio_b64 = base64::engine::general_purpose::STANDARD.encode(&pcm);
 
+    let mut config = serde_json::Map::new();
+    config.insert("encoding".into(), serde_json::json!("LINEAR16"));
+    config.insert("sampleRateHertz".into(), serde_json::json!(sample_rate));
+    config.insert("languageCode".into(), serde_json::json!(primary_language));
+    config.insert("enableAutomaticPunctuation".into(), serde_json::json!(true));
+    if !alternative_languages.is_empty() {
+        config.insert(
+            "alternativeLanguageCodes".into(),
+            serde_json::json!(alternative_languages),
+        );
+    }
+
     let body = serde_json::json!({
-        "config": {
-            "encoding": "LINEAR16",
-            "sampleRateHertz": sample_rate,
-            "languageCode": "en-US",
-            "enableAutomaticPunctuation": true,
-        },
+        "config": config,
         "audio": {
             "content": audio_b64,
         }
