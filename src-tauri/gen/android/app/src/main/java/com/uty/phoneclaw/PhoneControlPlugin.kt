@@ -1,9 +1,17 @@
 package com.uty.phoneclaw
 
 import android.app.Activity
+import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.util.Log
+import androidx.core.content.ContextCompat
 import app.tauri.annotation.Command
 import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
@@ -32,6 +40,94 @@ class PhoneControlPlugin(private val activity: Activity) : Plugin(activity) {
         @Volatile private var appCacheTime = 0L
         @Volatile private var appCacheValue: JSObject? = null
         private const val APP_CACHE_TTL_MS = 60_000L
+    }
+
+    // ----- Native speech-to-text (Android) -----
+
+    /**
+     * One-shot native Android speech recognition.
+     * Returns: { text: string }
+     */
+    @Command
+    fun recognizeSpeech(invoke: Invoke) {
+        if (ContextCompat.checkSelfPermission(activity, android.Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            invoke.reject("Microphone permission is not granted")
+            return
+        }
+
+        if (!SpeechRecognizer.isRecognitionAvailable(activity)) {
+            invoke.reject("Speech recognition is not available on this device")
+            return
+        }
+
+        val recognizer = SpeechRecognizer.createSpeechRecognizer(activity)
+        val settled = AtomicBoolean(false)
+        val mainHandler = Handler(Looper.getMainLooper())
+
+        fun finishSuccess(text: String) {
+            if (!settled.compareAndSet(false, true)) return
+            recognizer.stopListening()
+            recognizer.destroy()
+            invoke.resolve(JSObject().apply { put("text", text) })
+        }
+
+        fun finishError(message: String) {
+            if (!settled.compareAndSet(false, true)) return
+            recognizer.stopListening()
+            recognizer.destroy()
+            invoke.reject(message)
+        }
+
+        recognizer.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) = Unit
+            override fun onBeginningOfSpeech() = Unit
+            override fun onRmsChanged(rmsdB: Float) = Unit
+            override fun onBufferReceived(buffer: ByteArray?) = Unit
+            override fun onEndOfSpeech() = Unit
+            override fun onEvent(eventType: Int, params: Bundle?) = Unit
+
+            override fun onResults(results: Bundle?) {
+                val list = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                val best = list?.firstOrNull()?.trim().orEmpty()
+                finishSuccess(best)
+            }
+
+            override fun onPartialResults(partialResults: Bundle?) = Unit
+
+            override fun onError(error: Int) {
+                val msg = when (error) {
+                    SpeechRecognizer.ERROR_AUDIO -> "Audio capture error"
+                    SpeechRecognizer.ERROR_CLIENT -> "Client error"
+                    SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Insufficient microphone permission"
+                    SpeechRecognizer.ERROR_NETWORK -> "Network error"
+                    SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "Network timeout"
+                    SpeechRecognizer.ERROR_NO_MATCH -> "No speech matched"
+                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech recognizer is busy"
+                    SpeechRecognizer.ERROR_SERVER -> "Speech server error"
+                    SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech input detected"
+                    else -> "Speech recognition failed ($error)"
+                }
+                finishError(msg)
+            }
+        })
+
+        // Guard against rare devices that never dispatch callbacks.
+        mainHandler.postDelayed({
+            if (!settled.get()) {
+                finishError("Speech recognition timed out")
+            }
+        }, 20_000)
+
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, java.util.Locale.getDefault())
+        }
+
+        recognizer.startListening(intent)
     }
 
     // ----- App list -----

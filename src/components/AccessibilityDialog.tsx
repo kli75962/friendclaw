@@ -11,10 +11,11 @@ export function AccessibilityDialog() {
   const check = useCallback(() => {
     if (!IS_ANDROID) return;
     if (localStorage.getItem(DONT_SHOW_KEY) === 'true') return;
-    invoke<{ enabled: boolean }>('check_accessibility_enabled')
-      .then(({ enabled }) => {
+    invoke<boolean>('check_accessibility_enabled')
+      .then((enabled) => {
         if (enabled) {
           localStorage.removeItem(DONT_SHOW_KEY);
+          setVisible(false);
         } else {
           setVisible(true);
         }
@@ -25,7 +26,19 @@ export function AccessibilityDialog() {
   useEffect(() => {
     check();
     window.addEventListener('focus', check);
-    return () => window.removeEventListener('focus', check);
+    window.addEventListener('pageshow', check);
+    document.addEventListener('visibilitychange', check);
+
+    // Android may not always fire focus reliably after returning from Settings.
+    // Poll while mounted so the dialog disappears immediately once enabled.
+    const interval = window.setInterval(check, 1000);
+
+    return () => {
+      window.removeEventListener('focus', check);
+      window.removeEventListener('pageshow', check);
+      document.removeEventListener('visibilitychange', check);
+      window.clearInterval(interval);
+    };
   }, [check]);
 
   if (!visible) return null;

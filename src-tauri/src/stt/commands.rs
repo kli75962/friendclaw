@@ -130,3 +130,33 @@ pub async fn stt_stop() -> Result<String, String> {
 
     transcribe::transcribe(&samples, sample_rate, &api_key).await
 }
+
+/// Android-only: run one-shot native speech recognition and return transcript text.
+#[tauri::command]
+pub async fn stt_android_once(app: AppHandle) -> Result<String, String> {
+    #[cfg(target_os = "android")]
+    {
+        use serde::Deserialize;
+        use serde_json::json;
+        use tauri::Manager;
+        use crate::phone::plugin::PhoneControlHandle;
+
+        #[derive(Deserialize)]
+        struct Resp {
+            text: String,
+        }
+
+        let handle = app.state::<PhoneControlHandle<tauri::Wry>>();
+        let resp = handle
+            .0
+            .run_mobile_plugin::<Resp>("recognizeSpeech", json!({}))
+            .map_err(|e| e.to_string())?;
+        Ok(resp.text)
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = app;
+        Err("stt_android_once is only available on Android".to_string())
+    }
+}

@@ -35,9 +35,14 @@ class MainActivity : TauriActivity() {
   }
 
   private fun requestInitialPermissions() {
-    if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-      != PackageManager.PERMISSION_GRANTED) {
-      ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), REQUEST_CAMERA)
+    val cameraDenied = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED
+    val micDenied = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+    if (cameraDenied || micDenied) {
+      ActivityCompat.requestPermissions(
+        this,
+        arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO),
+        REQUEST_CAMERA,
+      )
     }
   }
 }

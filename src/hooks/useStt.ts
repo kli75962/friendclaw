@@ -37,43 +37,19 @@ export function useStt(onTranscript: (text: string) => void) {
     setSttError(null);
 
     if (isAndroid()) {
-      // ── Android: native STT via Web Speech API ──────────────────────────────
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const SR = (window as any).SpeechRecognition ?? (window as any).webkitSpeechRecognition;
-      if (!SR) {
-        setSttError('Speech recognition not available on this device');
-        return;
-      }
-      const recognition = new SR();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      recognition.onresult = (e: any) => {
-        let interim = '';
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-          interim += e.results[i][0].transcript;
-        }
-        if (interim) onTranscriptRef.current(interim);
-      };
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      recognition.onerror = (e: any) => {
-        setSttError(`STT error: ${e.error}`);
+      // ── Android: native STT via Tauri mobile plugin ─────────────────────────
+      try {
+        isListeningRef.current = true;
+        setIsListening(true);
+        const text = await invoke<string>('stt_android_once');
+        if (text) onTranscriptRef.current(text);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setSttError(`STT error: ${msg}`);
+      } finally {
         isListeningRef.current = false;
         setIsListening(false);
-      };
-
-      recognition.onend = () => {
-        // Restart automatically while still in listening state.
-        if (isListeningRef.current) recognition.start();
-      };
-
-      recognitionRef.current = recognition;
-      recognition.start();
-      isListeningRef.current = true;
-      setIsListening(true);
+      }
     } else {
       // ── Desktop: Google Cloud STT via Tauri command ──────────────────────────
       try {
@@ -93,7 +69,7 @@ export function useStt(onTranscript: (text: string) => void) {
     setIsListening(false);
 
     if (isAndroid()) {
-      recognitionRef.current?.stop();
+      // One-shot Android STT finishes by itself; no stop command needed.
       recognitionRef.current = null;
     } else {
       try {

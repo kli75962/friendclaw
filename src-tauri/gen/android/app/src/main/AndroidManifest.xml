@@ -3,6 +3,8 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- Required to list all installed apps on Android 11+ -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- Required for speech-to-text microphone capture -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Required for barcode/QR scanner -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />

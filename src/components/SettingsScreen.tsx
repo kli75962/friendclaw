@@ -268,10 +268,20 @@ function ScanView({ onPaired }: { onPaired: () => void; isAndroid: boolean }) {
     setStatus('scanning');
     setError('');
     try {
-      const result = await scan({ formats: [Format.QRCode], windowed: false });
+      const result = await scan({ formats: [Format.QRCode], windowed: true });
       await pairWithPayload(result.content);
     } catch (e) {
       const msg = e instanceof Error ? e.message : typeof e === 'object' ? JSON.stringify(e) : String(e);
+      const normalized = msg.toLowerCase();
+      if (
+        normalized.includes('cancel') ||
+        normalized.includes('closed') ||
+        normalized.includes('dismiss')
+      ) {
+        setStatus('idle');
+        setError('');
+        return;
+      }
       setError(msg);
       setStatus('error');
     }
