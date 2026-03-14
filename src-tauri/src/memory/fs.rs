@@ -206,6 +206,21 @@ pub struct ChatMeta {
     pub created_at: String,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatSyncChat {
+    pub id: String,
+    pub title: String,
+    pub created_at: String,
+    pub messages: Vec<serde_json::Value>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatSyncPayload {
+    pub chats: Vec<ChatSyncChat>,
+}
+
 fn chats_dir(app: &AppHandle) -> PathBuf {
     memory_dir(app).join("chats")
 }
@@ -281,5 +296,83 @@ pub fn delete_chat(app: &AppHandle, id: &str) -> Result<(), String> {
     let mut metas = list_chats(app);
     metas.retain(|m| m.id != id);
     let json = serde_json::to_string(&metas).map_err(|e| e.to_string())?;
+    std::fs::write(chats_index_path(app), json).map_err(|e| e.to_string())
+}
+
+/// Build a full chat snapshot for cross-device synchronization.
+pub fn export_chat_sync_payload(app: &AppHandle) -> ChatSyncPayload {
+    let metas = list_chats(app);
+    let chats = metas
+        .into_iter()
+        .map(|meta| ChatSyncChat {
+            id: meta.id.clone(),
+            title: meta.title,
+            created_at: meta.created_at,
+            messages: load_chat_messages(app, &meta.id),
+        })
+        .collect();
+    ChatSyncPayload { chats }
+}
+
+/// Apply a chat snapshot.
+/// - `replace=true`: mirror remote state exactly (including deletions).
+/// - `replace=false`: merge remote chats into local without deleting locals.
+pub fn import_chat_sync_payload(
+    app: &AppHandle,
+    payload: ChatSyncPayload,
+    replace: bool,
+) -> Result<(), String> {
+    let dir = chats_dir(app);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+
+    let mut incoming_metas = Vec::<ChatMeta>::with_capacity(payload.chats.len());
+    let mut incoming_ids = std::collections::HashSet::<String>::new();
+
+    for chat in payload.chats {
+        if !is_safe_id(&chat.id) {
+            continue;
+        }
+        incoming_ids.insert(chat.id.clone());
+
+        let path = dir.join(format!("{}.json", chat.id));
+        let json = serde_json::to_string(&chat.messages).map_err(|e| e.to_string())?;
+        std::fs::write(path, json).map_err(|e| e.to_string())?;
+
+        incoming_metas.push(ChatMeta {
+            id: chat.id,
+            title: chat.title,
+            created_at: chat.created_at,
+        });
+    }
+
+    if replace {
+        if let Ok(entries) = std::fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.file_name().and_then(|n| n.to_str()) == Some("_index.json") {
+                    continue;
+                }
+                let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+                if !incoming_ids.contains(stem) {
+                    let _ = std::fs::remove_file(path);
+                }
+            }
+        }
+
+        let json = serde_json::to_string(&incoming_metas).map_err(|e| e.to_string())?;
+        std::fs::write(chats_index_path(app), json).map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    let mut merged = list_chats(app);
+    for meta in incoming_metas.into_iter().rev() {
+        if let Some(existing) = merged.iter_mut().find(|m| m.id == meta.id) {
+            *existing = meta;
+        } else {
+            merged.insert(0, meta);
+        }
+    }
+
+    let json = serde_json::to_string(&merged).map_err(|e| e.to_string())?;
     std::fs::write(chats_index_path(app), json).map_err(|e| e.to_string())
 }

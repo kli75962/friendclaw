@@ -6,7 +6,7 @@ use tauri::AppHandle;
 
 use crate::session::store;
 use super::exec::exec_handler;
-use super::types::{PingQuery, PingResponse, RegisterRequest, ToolRequest, ToolResponse};
+use super::types::{ChatImportRequest, PingQuery, PingResponse, RegisterRequest, ToolRequest, ToolResponse};
 
 // ── Server state ─────────────────────────────────────────────────────────────
 
@@ -73,11 +73,22 @@ async fn register_handler(
     let _ = store::upsert_peer(
         &app,
         crate::session::types::PairedDevice {
-            device_id: body.device_id,
-            address: body.address,
+            device_id: body.device_id.clone(),
+            address: body.address.clone(),
             label,
         },
     );
+
+    let peer = crate::session::types::PairedDevice {
+        device_id: body.device_id,
+        address: body.address,
+        label: body.label,
+    };
+    let app_for_sync = (*app).clone();
+    tauri::async_runtime::spawn(async move {
+        super::chat_sync::sync_after_pair(&app_for_sync, &peer).await;
+    });
+
     // A device just came online — emit updated status to the frontend immediately.
     let app_clone = (*app).clone();
     tauri::async_runtime::spawn(async move {
@@ -86,6 +97,40 @@ async fn register_handler(
         app_clone.emit("peer-status-changed", statuses).ok();
     });
     StatusCode::OK
+}
+
+/// GET /chat/export?key=<hash_key>
+/// Returns full chat snapshot for synchronization.
+async fn chat_export_handler(
+    State(app): State<BridgeState>,
+    Query(query): Query<PingQuery>,
+) -> Result<Json<crate::memory::ChatSyncPayload>, StatusCode> {
+    let cfg = store::bootstrap(&app);
+    if query.key != cfg.hash_key {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(Json(crate::memory::export_chat_sync_payload(&app)))
+}
+
+/// POST /chat/import
+/// Applies incoming chat snapshot with merge/replace mode.
+async fn chat_import_handler(
+    State(app): State<BridgeState>,
+    Json(body): Json<ChatImportRequest>,
+) -> StatusCode {
+    let cfg = store::bootstrap(&app);
+    if body.key != cfg.hash_key {
+        return StatusCode::UNAUTHORIZED;
+    }
+
+    match crate::memory::import_chat_sync_payload(&app, body.payload, body.replace) {
+        Ok(()) => {
+            use tauri::Emitter;
+            let _ = app.emit("chat-sync-updated", serde_json::json!({}));
+            StatusCode::OK
+        }
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
+    }
 }
 
 /// POST /tool — execute a single tool call on this device and return the result.
@@ -123,6 +168,8 @@ pub fn start_bridge_server(app: AppHandle) {
             .route("/ping", get(ping_handler))
             .route("/register", post(register_handler))
             .route("/tool", post(tool_handler))
+            .route("/chat/export", get(chat_export_handler))
+            .route("/chat/import", post(chat_import_handler))
             .route("/exec", post(exec_handler))
             .with_state(state);
 

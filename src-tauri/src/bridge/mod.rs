@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod chat_sync;
 pub mod exec;
 pub mod health;
 pub mod pairing_token;

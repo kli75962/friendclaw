@@ -165,11 +165,22 @@ pub async fn discover_and_pair(app: AppHandle, address: String) -> Result<(), St
     store::upsert_peer(
         &app,
         crate::session::types::PairedDevice {
-            device_id: resp.device_id,
-            address,
+            device_id: resp.device_id.clone(),
+            address: address.clone(),
             label: resp.label.chars().take(64).collect(),
         },
     )?;
+
+    let peer = crate::session::types::PairedDevice {
+        device_id: resp.device_id,
+        address,
+        label: resp.label,
+    };
+    let app_for_sync = app.clone();
+    tauri::async_runtime::spawn(async move {
+        super::chat_sync::sync_after_pair(&app_for_sync, &peer).await;
+    });
+
     Ok(())
 }
 
@@ -216,6 +227,16 @@ pub async fn pair_from_qr(
             label: resp.label.chars().take(64).collect(),
         },
     )?;
+
+    let peer = crate::session::types::PairedDevice {
+        device_id: resp.device_id,
+        address: address.clone(),
+        label: resp.label,
+    };
+    let app_for_sync = app.clone();
+    tauri::async_runtime::spawn(async move {
+        super::chat_sync::sync_after_pair(&app_for_sync, &peer).await;
+    });
 
     // Best-effort: tell the peer about us so it can save our address too.
     // Use effective_key (the newly established shared key) for authentication.

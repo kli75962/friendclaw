@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useOllamaChat } from './hooks/useOllamaChat';
 import { useStt } from './hooks/useStt';
 import { TopBar } from './components/TopBar';
@@ -33,6 +34,21 @@ function App() {
   useEffect(() => {
     invoke<ChatMeta[]>('list_chats').then(setChatMetas).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    const unlisten = listen('chat-sync-updated', async () => {
+      const metas = await invoke<ChatMeta[]>('list_chats').catch(() => []);
+      setChatMetas(metas);
+
+      if (!activeChatId) return;
+      const msgs = await invoke<Message[]>('load_chat_messages', { id: activeChatId }).catch(() => []);
+      setInitMessages(msgs);
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [activeChatId]);
 
   const onChatCreated = useCallback((id: string, title: string) => {
     const createdAt = new Date().toISOString();

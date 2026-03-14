@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::memory::ChatSyncPayload;
 
 /// Response body for `GET /ping` — returned only when the caller's key matches.
 /// `hash_key` is present ONLY when a one-time pairing token was used;
@@ -49,4 +50,12 @@ pub struct PeerStatus {
     pub label: String,
     pub address: String,
     pub online: bool,
+}
+
+/// Request body for `POST /chat/import`.
+#[derive(Deserialize)]
+pub struct ChatImportRequest {
+    pub key: String,
+    pub payload: ChatSyncPayload,
+    pub replace: bool,
 }
