@@ -140,7 +140,7 @@ function App() {
       .catch(() => {
         // Ollama unreachable — keep default, user will see error on send
       });
-  }, [ollamaEndpointRevision]);
+  }, [ollamaEndpointRevision, showSettings]);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: 'smooth' });

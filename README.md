@@ -22,8 +22,6 @@ debug:
   adb logcat | grep PhoneControlPlugin
 
 build android:
-  bun run tauri android init
-  
   rm -rf src-tauri/gen/android/app/build dist
   bun run tauri android build
   

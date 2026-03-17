@@ -1,32 +1,15 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { ArrowLeft, Camera, ChevronRight, ImagePlus, Monitor, Save, QrCode, Cpu, Smartphone, Trash2, Mic, Network } from 'lucide-react';
+import { ArrowLeft, Camera, ChevronDown, ChevronRight, ImagePlus, Monitor, QrCode, Cpu, Smartphone, Trash2, Mic, Network, Check, Pencil } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { scan, Format } from '@tauri-apps/plugin-barcode-scanner';
 import jsQR from 'jsqr';
 import { Modal } from './Modal';
+import './SettingsScreen.css';
 import { useSession } from '../hooks/useSession';
 import type { SettingsScreenProps } from '../types';
 
-// ── Types ───────────────────────────────────────────────────────────────────────────────
-
-type MemoryFile = 'core.md' | 'conversations.jsonl';
-type SettingsTab = 'general' | 'memory';
-
-// ── Memory file tab config ─────────────────────────────────────────────────────────
-
-const MEMORY_TABS: { file: MemoryFile; label: string; desc: string }[] = [
-  {
-    file: 'core.md',
-    label: 'Core',
-    desc: 'Injected into every prompt — keep short. User preferences, name, language.',
-  },
-  {
-    file: 'conversations.jsonl',
-    label: 'Recall',
-    desc: 'Last 50 conversation summaries (JSONL). Used by the LLM to search past sessions.',
-  },
-];
+type SettingsTab = 'general' | 'connect';
 
 // ── Sub-components ──────────────────────────────────────────────────────────────────
 
@@ -40,15 +23,15 @@ function SegmentControl<T extends string>({
   onChange: (v: T) => void;
 }) {
   return (
-    <div className="flex bg-[#1E1F20] rounded-full p-1">
+    <div className="settings-segment flex bg-[#181C24] border border-[#2C3444] rounded-full p-1">
       {options.map((opt) => (
         <button
           key={opt.value}
           onClick={() => onChange(opt.value)}
-          className={`flex-1 py-2 text-sm font-medium rounded-full transition-all ${
+          className={`settings-segment-btn flex-1 py-2 text-sm font-medium rounded-full transition-all ${
             value === opt.value
-              ? 'bg-purple-600 text-white shadow-sm'
-              : 'text-gray-400 hover:text-gray-200'
+              ? 'settings-segment-btn-active bg-indigo-600 text-white shadow-sm'
+              : 'text-slate-400 hover:text-slate-200'
           }`}
         >
           {opt.label}
@@ -60,7 +43,7 @@ function SegmentControl<T extends string>({
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
-    <p className="px-1 pb-2 pt-6 text-[11px] font-bold text-gray-500 uppercase tracking-wider">
+    <p className="settings-section-header text-[11px] font-bold text-slate-400 uppercase tracking-[0.14em]">
       {children}
     </p>
   );
@@ -68,7 +51,7 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 
 function SectionFooter({ children }: { children: React.ReactNode }) {
   return (
-    <p className="px-1 pt-2 pb-1 text-[12px] text-gray-500 leading-relaxed">
+    <p className="settings-section-footer text-[12px] text-slate-400 leading-relaxed">
       {children}
     </p>
   );
@@ -76,7 +59,7 @@ function SectionFooter({ children }: { children: React.ReactNode }) {
 
 function Card({ children }: { children: React.ReactNode }) {
   return (
-    <div className="bg-[#1E1F20] rounded-2xl overflow-hidden">
+    <div className="settings-card">
       {children}
     </div>
   );
@@ -93,7 +76,7 @@ function CardRow({
   return (
     <Tag
       onClick={onClick}
-      className="w-full flex items-center justify-between px-4 py-3.5 text-left hover:bg-white/[0.03] transition-colors"
+      className="settings-card-row w-full flex items-center justify-between text-left transition-colors"
     >
       {children}
     </Tag>
@@ -101,19 +84,7 @@ function CardRow({
 }
 
 function CardDivider() {
-  return <div className="h-px bg-white/[0.06] mx-4" />;
-}
-
-function Radio({ active }: { active: boolean }) {
-  return (
-    <div
-      className={`w-[22px] h-[22px] rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
-        active ? 'border-purple-500 bg-purple-500' : 'border-gray-600'
-      }`}
-    >
-      {active && <div className="w-2 h-2 rounded-full bg-white" />}
-    </div>
-  );
+  return <div className="settings-card-divider h-px bg-[#2B3344] mx-4" />;
 }
 
 // ── QR Pairing views ────────────────────────────────────────────────────────────────
@@ -187,7 +158,7 @@ function ShowQrView() {
             {allAddresses.map((addr) => (
               <span
                 key={addr}
-                className="px-2 py-1 text-xs rounded-lg bg-[#2C2C2C] text-gray-300"
+                className="px-2 py-1 text-xs rounded-lg bg-[#222836] text-slate-300"
               >
                 {addr}
               </span>
@@ -202,12 +173,12 @@ function ShowQrView() {
             value={customAddress}
             onChange={(e) => setCustomAddress(e.target.value)}
             placeholder="Override with custom ip:port"
-            className="flex-1 bg-[#2C2C2C] text-gray-200 text-sm px-3 py-2 rounded-xl outline-none focus:ring-1 focus:ring-purple-500"
+            className="flex-1 bg-[#111521] border border-[#2F3A52] text-slate-200 text-sm px-3 py-2 rounded-xl outline-none focus:ring-1 focus:ring-indigo-500"
           />
           <button
             onClick={fetchPublicIp}
             disabled={fetchingPublicIp}
-            className="px-3 py-2 rounded-xl bg-purple-600/20 text-purple-400 text-xs hover:bg-purple-600/30 transition-colors disabled:opacity-50"
+            className="px-3 py-2 rounded-xl bg-indigo-600/20 text-indigo-300 text-xs hover:bg-indigo-600/30 transition-colors disabled:opacity-50"
           >
             {fetchingPublicIp ? '…' : 'Public IP'}
           </button>
@@ -301,14 +272,14 @@ function ScanView({ onPaired }: { onPaired: () => void; isAndroid: boolean }) {
         <div className="flex flex-col items-center gap-3 w-full">
           <button
             onClick={handleScan}
-            className="flex items-center gap-2 px-6 py-3 rounded-xl bg-purple-600 text-sm font-medium text-white hover:bg-purple-500 transition-colors"
+            className="flex items-center gap-2 px-6 py-3 rounded-xl bg-indigo-600 text-sm font-medium text-white hover:bg-indigo-500 transition-colors"
           >
             <Camera size={16} />
             Scan QR Code
           </button>
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#2C2C2C] text-sm text-gray-300 hover:bg-[#383838] transition-colors"
+            className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#222836] text-sm text-slate-300 hover:bg-[#2B3243] transition-colors"
           >
             <ImagePlus size={15} />
             Import from image
@@ -330,14 +301,14 @@ function ScanView({ onPaired }: { onPaired: () => void; isAndroid: boolean }) {
           <div className="flex gap-2">
             <button
               onClick={handleScan}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#2C2C2C] text-sm text-gray-200 hover:bg-[#383838] transition-colors"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#222836] text-sm text-slate-200 hover:bg-[#2B3243] transition-colors"
             >
               <Camera size={14} />
               Try again
             </button>
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#2C2C2C] text-sm text-gray-200 hover:bg-[#383838] transition-colors"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#222836] text-sm text-slate-200 hover:bg-[#2B3243] transition-colors"
             >
               <ImagePlus size={14} />
               Image
@@ -358,7 +329,9 @@ function ScanView({ onPaired }: { onPaired: () => void; isAndroid: boolean }) {
 export function SettingsScreen({ model, availableModels, onModelChange, onOllamaEndpointChanged, onBack }: SettingsScreenProps) {
   const [tab, setTab] = useState<SettingsTab>('general');
   const [showQrPair, setShowQrPair] = useState(false);
-  const [showModelSelect, setShowModelSelect] = useState(false);
+  const [showEndpointEdit, setShowEndpointEdit] = useState(false);
+  const [showSttEdit, setShowSttEdit] = useState(false);
+  const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const [googleApiKey, setGoogleApiKey] = useState('');
   const [googleSttLanguages, setGoogleSttLanguages] = useState('en-US,yue-Hant-HK,cmn-Hans-CN');
   const [ollamaHost, setOllamaHost] = useState('127.0.0.1');
@@ -375,16 +348,10 @@ export function SettingsScreen({ model, availableModels, onModelChange, onOllama
       .then((val) => { if (val) setGoogleSttLanguages(val); })
       .catch(() => {});
   }, []);
-
-  const [activeMemTab, setActiveMemTab] = useState<MemoryFile>('core.md');
-  const [fileContent, setFileContent] = useState('');
-  const [dirty, setDirty] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [saveMsg, setSaveMsg] = useState('');
   const [peerStatus, setPeerStatus] = useState<Record<string, boolean>>({});
   const { session, refresh, removeLinkedDevice, setOllamaEndpoint } = useSession();
   const isAndroid = session?.device.device_type === 'android';
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const modelMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const fallbackHost = isAndroid
@@ -394,14 +361,6 @@ export function SettingsScreen({ model, availableModels, onModelChange, onOllama
     setOllamaHost(host || fallbackHost);
     setOllamaPort(String(session?.ollama_port ?? 11434));
   }, [isAndroid, session?.ollama_host_override, session?.ollama_port, session?.paired_devices]);
-
-  useEffect(() => {
-    setDirty(false);
-    setSaveMsg('');
-    invoke<string>('get_memory_file', { filename: activeMemTab })
-      .then((content) => setFileContent(content))
-      .catch(() => setFileContent(''));
-  }, [activeMemTab]);
 
   useEffect(() => {
     if ((session?.paired_devices ?? []).length === 0) return;
@@ -416,19 +375,17 @@ export function SettingsScreen({ model, availableModels, onModelChange, onOllama
     return () => { unlisten.then((fn) => fn()); };
   }, [session?.paired_devices]);
 
-  async function handleSave() {
-    setSaving(true);
-    try {
-      await invoke('set_memory_file', { filename: activeMemTab, content: fileContent });
-      setDirty(false);
-      setSaveMsg('Saved');
-      setTimeout(() => setSaveMsg(''), 2000);
-    } catch {
-      setSaveMsg('Error saving');
-    } finally {
-      setSaving(false);
+  useEffect(() => {
+    function onPointerDown(event: PointerEvent) {
+      if (!modelMenuRef.current) return;
+      if (!modelMenuRef.current.contains(event.target as Node)) {
+        setIsModelMenuOpen(false);
+      }
     }
-  }
+
+    window.addEventListener('pointerdown', onPointerDown);
+    return () => window.removeEventListener('pointerdown', onPointerDown);
+  }, []);
 
   async function handleSaveOllamaEndpoint() {
     const host = ollamaHost.trim();
@@ -457,7 +414,7 @@ export function SettingsScreen({ model, availableModels, onModelChange, onOllama
   }
 
   return (
-    <div className="flex flex-col h-screen bg-[#131314] text-[#E3E3E3]">
+    <div className="settings-root flex flex-col h-screen bg-gradient-to-b from-[#0D1017] to-[#090B11] text-[#E7EAF3]">
       {showQrPair && (
         <Modal title={isAndroid ? 'Scan QR to Link' : 'Show QR to Link'} onClose={() => setShowQrPair(false)}>
           {isAndroid ? (
@@ -467,46 +424,93 @@ export function SettingsScreen({ model, availableModels, onModelChange, onOllama
           )}
         </Modal>
       )}
-      {showModelSelect && (
-        <Modal title="Select Model" onClose={() => setShowModelSelect(false)}>
-          {availableModels.length === 0 ? (
-            <p className="text-sm text-gray-500 text-center py-4">No models found — is Ollama running?</p>
-          ) : (
-            <div className="flex flex-col -mx-5">
-              {availableModels.map((m, i) => (
-                <div key={m}>
-                  {i > 0 && <CardDivider />}
-                  <button
-                    onClick={() => { onModelChange(m); setShowModelSelect(false); }}
-                    className="w-full flex items-center justify-between px-5 py-3.5 text-left hover:bg-white/[0.03] transition-colors"
-                  >
-                    <p className="text-[15px]">{m}</p>
-                    <Radio active={m === model} />
-                  </button>
-                </div>
-              ))}
+      {showEndpointEdit && (
+        <Modal title="Edit Ollama Endpoint" onClose={() => setShowEndpointEdit(false)}>
+          <div className="settings-edit-modal-body">
+            <p className="text-[12px] text-slate-400">Host and port for model list and chat requests.</p>
+            <p className="text-[12px] text-slate-400 mt-1">Enter only host/IP and port. Example: 192.168.1.10 and 11434.</p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-3">
+              <input
+                value={ollamaHost}
+                onChange={(e) => { setOllamaHost(e.target.value); setOllamaSaveMsg(''); }}
+                placeholder="127.0.0.1"
+                className="settings-popup-input sm:col-span-2 bg-[#101521] border border-[#2F3A52] rounded-xl px-4 py-2.5 text-sm font-mono text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
+              <input
+                value={ollamaPort}
+                onChange={(e) => { setOllamaPort(e.target.value); setOllamaSaveMsg(''); }}
+                placeholder="11434"
+                inputMode="numeric"
+                className="settings-popup-input bg-[#101521] border border-[#2F3A52] rounded-xl px-4 py-2.5 text-sm font-mono text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              />
             </div>
-          )}
+
+            <div className="settings-edit-modal-actions">
+              <p className={`text-xs ${ollamaSaveMsg === 'Saved' ? 'text-green-400' : 'text-red-400'}`}>
+                {ollamaSaveMsg || ' '}
+              </p>
+              <button
+                onClick={handleSaveOllamaEndpoint}
+                disabled={ollamaSaving}
+                className="px-4 py-2 rounded-full text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+              >
+                {ollamaSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {showSttEdit && !isAndroid && (
+        <Modal title="Edit Speech to Text" onClose={() => setShowSttEdit(false)}>
+          <div className="settings-edit-modal-body">
+            <p className="text-[12px] text-slate-400">Google Cloud Speech-to-Text API settings.</p>
+            <input
+              type="password"
+              value={googleApiKey}
+              onChange={(e) => {
+                setGoogleApiKey(e.target.value);
+                invoke('store_secret', { key: 'google_api_key', value: e.target.value }).catch(() => {});
+              }}
+              placeholder="AIzaSy..."
+              autoComplete="off"
+              className="settings-popup-input mt-3 bg-[#101521] border border-[#2F3A52] rounded-xl px-4 py-2.5 text-sm font-mono text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+            <input
+              value={googleSttLanguages}
+              onChange={(e) => {
+                const value = e.target.value;
+                setGoogleSttLanguages(value);
+                invoke('store_secret', { key: 'google_stt_languages', value }).catch(() => {});
+              }}
+              placeholder="en-US,yue-Hant-HK,cmn-Hans-CN"
+              autoComplete="off"
+              className="settings-popup-input mt-2 bg-[#101521] border border-[#2F3A52] rounded-xl px-4 py-2.5 text-sm font-mono text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            />
+            <p className="text-[12px] text-slate-400 mt-2">
+              Or set <span className="font-mono text-slate-300">GOOGLE_API_KEY</span> in <span className="font-mono text-slate-300">src-tauri/.secrets</span>.
+              Language codes are comma-separated, first is primary.
+            </p>
+          </div>
         </Modal>
       )}
 
       {/* Header */}
-      <div className="flex items-center gap-3 px-2 py-3 border-b border-[#2C2C2C]">
+      <div className="settings-header flex items-center gap-3 px-2 py-3 border-b border-[#2A3140]">
         <button
           onClick={onBack}
-          className="p-2 hover:bg-[#2C2C2C] rounded-full transition-colors"
+          className="settings-back-btn p-2 hover:bg-[#1A2130] rounded-full transition-colors"
         >
-          <ArrowLeft size={22} className="text-gray-400" />
+          <ArrowLeft size={22} className="text-slate-300" />
         </button>
         <h1 className="text-lg font-semibold">Settings</h1>
       </div>
 
       {/* Segment tabs */}
-      <div className="px-4 pb-3">
+      <div className="settings-tabs px-4 pb-3">
         <SegmentControl
           options={[
             { value: 'general' as const, label: 'General' },
-            { value: 'memory' as const, label: 'Memory' },
+            { value: 'connect' as const, label: 'Connect' },
           ]}
           value={tab}
           onChange={setTab}
@@ -514,76 +518,93 @@ export function SettingsScreen({ model, availableModels, onModelChange, onOllama
       </div>
 
       {/* Scrollable content */}
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 custom-scrollbar">
-        <div className="max-w-2xl mx-auto pb-12">
-          {tab === 'general' ? (
+      <div className="settings-body flex-1 min-h-0 overflow-y-auto px-4 custom-scrollbar">
+        <div className="settings-content max-w-2xl mx-auto pb-12">
+          {tab === 'general' && (
             <>
               {/* Model */}
               <SectionHeader>Model</SectionHeader>
               <Card>
-                <CardRow onClick={() => setShowModelSelect(true)}>
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-purple-500/15 flex items-center justify-center">
-                      <Cpu size={18} className="text-purple-400" />
+                <div className="px-4 py-3.5 flex flex-col gap-2">
+                  <div className="flex items-center gap-3 mb-1">
+                    <div className="w-9 h-9 rounded-xl bg-indigo-500/15 flex items-center justify-center shrink-0">
+                      <Cpu size={18} className="text-indigo-300" />
                     </div>
                     <div>
                       <p className="text-[15px]">Active model</p>
-                      <p className="text-[12px] text-gray-500 mt-0.5 font-mono">{model || 'None selected'}</p>
-                    </div>
-                  </div>
-                  <ChevronRight size={18} className="text-gray-500 shrink-0" />
-                </CardRow>
-              </Card>
-              <SectionFooter>
-                Models are loaded from your local Ollama instance.
-              </SectionFooter>
-
-              <SectionHeader>Ollama Endpoint</SectionHeader>
-              <Card>
-                <div className="px-4 py-3.5 flex flex-col gap-3">
-                  <div className="flex items-center gap-3 mb-1">
-                    <div className="w-9 h-9 rounded-xl bg-emerald-500/15 flex items-center justify-center shrink-0">
-                      <Network size={18} className="text-emerald-400" />
-                    </div>
-                    <div>
-                      <p className="text-[15px]">Host and Port</p>
-                      <p className="text-[12px] text-gray-500 mt-0.5">Used for model list and chat requests</p>
+                      <p className="text-[12px] text-slate-400 mt-0.5">Select model for chat requests</p>
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    <input
-                      value={ollamaHost}
-                      onChange={(e) => { setOllamaHost(e.target.value); setOllamaSaveMsg(''); }}
-                      placeholder="127.0.0.1"
-                      className="sm:col-span-2 bg-[#131314] border border-[#2C2C2C] rounded-xl px-4 py-2.5 text-sm font-mono text-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
-                    />
-                    <input
-                      value={ollamaPort}
-                      onChange={(e) => { setOllamaPort(e.target.value); setOllamaSaveMsg(''); }}
-                      placeholder="11434"
-                      inputMode="numeric"
-                      className="bg-[#131314] border border-[#2C2C2C] rounded-xl px-4 py-2.5 text-sm font-mono text-gray-300 focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between gap-3">
-                    <p className={`text-xs ${ollamaSaveMsg === 'Saved' ? 'text-green-400' : 'text-red-400'}`}>
-                      {ollamaSaveMsg || ' '}
-                    </p>
+                  <div ref={modelMenuRef} className="settings-model-menu mt-1">
                     <button
-                      onClick={handleSaveOllamaEndpoint}
-                      disabled={ollamaSaving}
-                      className="px-4 py-2 rounded-full text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 transition-colors"
+                      type="button"
+                      onClick={() => setIsModelMenuOpen((v) => !v)}
+                      className={`settings-model-trigger ${isModelMenuOpen ? 'settings-model-trigger-open' : ''}`}
                     >
-                      {ollamaSaving ? 'Saving…' : 'Save'}
+                      <span className="settings-model-trigger-label">
+                        {model || 'No model selected'}
+                      </span>
+                      <ChevronDown size={16} className={`settings-model-trigger-chevron ${isModelMenuOpen ? 'settings-model-trigger-chevron-open' : ''}`} />
                     </button>
+
+                    {isModelMenuOpen && (
+                      <div className="settings-model-dropdown">
+                        {availableModels.length === 0 ? (
+                          <button type="button" className="settings-model-option" disabled>
+                            <span>No models found</span>
+                          </button>
+                        ) : (
+                          availableModels.map((m) => (
+                            <button
+                              key={m}
+                              type="button"
+                              className={`settings-model-option ${m === model ? 'settings-model-option-active' : ''}`}
+                              onClick={() => {
+                                onModelChange(m);
+                                setIsModelMenuOpen(false);
+                              }}
+                            >
+                              <span>{m}</span>
+                              {m === model && <Check size={14} />}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               </Card>
               <SectionFooter>
-                Enter only host/IP and port. Example: 192.168.1.10 and 11434.
+                Models are loaded from your local Ollama instance.
               </SectionFooter>
+            </>
+          )}
+
+          {tab === 'connect' && (
+            <>
+              <SectionHeader>Ollama Endpoint</SectionHeader>
+              <Card>
+                <div className="px-4 py-3.5 flex flex-col gap-3">
+                  <div className="flex items-center gap-3 mb-1">
+                    <div className="w-9 h-9 rounded-xl bg-blue-500/15 flex items-center justify-center shrink-0">
+                      <Network size={18} className="text-blue-300" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-[15px]">Host and Port</p>
+                      <p className="text-[12px] text-slate-400 mt-0.5">Used for model list and chat requests</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowEndpointEdit(true)}
+                      className="settings-edit-icon"
+                      aria-label="Edit Ollama endpoint"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                  </div>
+                </div>
+              </Card>
 
               {/* STT — desktop only; Android uses native speech recognition */}
               {!isAndroid && (
@@ -593,43 +614,23 @@ export function SettingsScreen({ model, availableModels, onModelChange, onOllama
                 <div className="px-4 py-3.5 flex flex-col gap-2">
                   <div className="flex items-center gap-3 mb-1">
                     <div className="w-9 h-9 rounded-xl bg-blue-500/15 flex items-center justify-center shrink-0">
-                      <Mic size={18} className="text-blue-400" />
+                      <Mic size={18} className="text-blue-300" />
                     </div>
-                    <div>
+                    <div className="flex-1">
                       <p className="text-[15px]">Google API Key</p>
-                      <p className="text-[12px] text-gray-500 mt-0.5">Google Cloud Speech-to-Text API key</p>
+                      <p className="text-[12px] text-slate-400 mt-0.5">Google Cloud Speech-to-Text API key</p>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowSttEdit(true)}
+                      className="settings-edit-icon"
+                      aria-label="Edit speech to text settings"
+                    >
+                      <Pencil size={14} />
+                    </button>
                   </div>
-                  <input
-                    type="password"
-                    value={googleApiKey}
-                    onChange={(e) => {
-                      setGoogleApiKey(e.target.value);
-                      invoke('store_secret', { key: 'google_api_key', value: e.target.value }).catch(() => {});
-                    }}
-                    placeholder="AIzaSy..."
-                    autoComplete="off"
-                    className="bg-[#131314] border border-[#2C2C2C] rounded-xl px-4 py-2.5 text-sm font-mono text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
-                  />
-                  <input
-                    value={googleSttLanguages}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setGoogleSttLanguages(value);
-                      invoke('store_secret', { key: 'google_stt_languages', value }).catch(() => {});
-                    }}
-                    placeholder="en-US,yue-Hant-HK,cmn-Hans-CN"
-                    autoComplete="off"
-                    className="bg-[#131314] border border-[#2C2C2C] rounded-xl px-4 py-2.5 text-sm font-mono text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
-                  />
                 </div>
               </Card>
-              <SectionFooter>
-                Or set{' '}
-                <span className="font-mono text-gray-300">GOOGLE_API_KEY</span>{' '}
-                in <span className="font-mono text-gray-300">src-tauri/.secrets</span>.
-                Language codes are comma-separated, first is primary.
-              </SectionFooter>
                 </>
               )}
 
@@ -638,20 +639,17 @@ export function SettingsScreen({ model, availableModels, onModelChange, onOllama
               <Card>
                 <CardRow onClick={() => setShowQrPair(true)}>
                   <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl bg-purple-500/15 flex items-center justify-center">
-                      <QrCode size={18} className="text-purple-400" />
+                    <div className="w-9 h-9 rounded-xl bg-indigo-500/15 flex items-center justify-center">
+                      <QrCode size={18} className="text-indigo-300" />
                     </div>
                     <div>
                       <p className="text-[15px]">Pair with QR code</p>
-                      <p className="text-[12px] text-gray-500 mt-0.5">Scan or display a QR code to link devices</p>
+                      <p className="text-[12px] text-slate-400 mt-0.5">Scan or display a QR code to link devices</p>
                     </div>
                   </div>
-                  <ChevronRight size={18} className="text-gray-500 shrink-0" />
+                  <ChevronRight size={18} className="text-slate-500 shrink-0" />
                 </CardRow>
               </Card>
-              <SectionFooter>
-                Pair devices to sync sessions automatically.
-              </SectionFooter>
 
               {/* Linked devices */}
               {(session?.paired_devices ?? []).length > 0 && (
@@ -663,14 +661,14 @@ export function SettingsScreen({ model, availableModels, onModelChange, onOllama
                         {i > 0 && <CardDivider />}
                         <div className="flex items-center justify-between px-4 py-3.5">
                           <div className="flex items-center gap-3">
-                            <div className="w-9 h-9 rounded-xl bg-[#2C2C2C] flex items-center justify-center shrink-0">
+                            <div className="w-9 h-9 rounded-xl bg-[#222836] flex items-center justify-center shrink-0">
                               {dev.label.toLowerCase().includes('phone') || dev.label.toLowerCase().includes('android')
-                                ? <Smartphone size={17} className="text-gray-400" />
-                                : <Monitor size={17} className="text-gray-400" />}
+                                ? <Smartphone size={17} className="text-slate-400" />
+                                : <Monitor size={17} className="text-slate-400" />}
                             </div>
                             <div>
                               <p className="text-[15px]">{dev.label}</p>
-                              <p className="text-[12px] text-gray-500 mt-0.5 font-mono">{dev.address}</p>
+                              <p className="text-[12px] text-slate-400 mt-0.5 font-mono">{dev.address}</p>
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
@@ -692,65 +690,6 @@ export function SettingsScreen({ model, availableModels, onModelChange, onOllama
                   </Card>
                 </>
               )}
-            </>
-          ) : (
-            <>
-              {/* Memory sub-tabs */}
-              <div className="pt-2 pb-4">
-                <SegmentControl
-                  options={MEMORY_TABS.map((t) => ({ value: t.file, label: t.label }))}
-                  value={activeMemTab}
-                  onChange={setActiveMemTab}
-                />
-              </div>
-
-              <Card>
-                <div className="px-4 py-3">
-                  <p className="text-[13px] text-gray-400 leading-relaxed">
-                    {MEMORY_TABS.find((t) => t.file === activeMemTab)?.desc}
-                  </p>
-                </div>
-              </Card>
-
-              <div className="mt-3">
-                <Card>
-                  <div className="p-3">
-                    <textarea
-                      ref={textareaRef}
-                      value={fileContent}
-                      onChange={(e) => { setFileContent(e.target.value); setDirty(true); setSaveMsg(''); }}
-                      className="w-full h-64 bg-[#131314] border border-[#2C2C2C] rounded-xl px-4 py-3 text-sm font-mono text-gray-300 focus:outline-none focus:ring-1 focus:ring-purple-500/50 resize-none leading-relaxed transition-all"
-                      spellCheck={false}
-                      placeholder={`No content in ${activeMemTab}`}
-                    />
-                  </div>
-                </Card>
-              </div>
-
-              {(dirty || saveMsg) && (
-                <div className="mt-3 flex justify-end">
-                  {dirty && (
-                    <button
-                      onClick={handleSave}
-                      disabled={saving}
-                      className="flex items-center gap-1.5 text-sm font-medium text-white bg-purple-600 hover:bg-purple-500 px-4 py-2 rounded-full transition-colors disabled:opacity-50"
-                    >
-                      <Save size={14} />
-                      {saving ? 'Saving…' : 'Save changes'}
-                    </button>
-                  )}
-                  {saveMsg && !dirty && (
-                    <span className="text-sm font-medium text-green-400 bg-green-500/10 px-4 py-2 rounded-full">
-                      {saveMsg}
-                    </span>
-                  )}
-                </div>
-              )}
-
-              <SectionFooter>
-                The LLM can read and write these files using the{' '}
-                <span className="font-mono bg-white/5 px-1 py-0.5 rounded text-gray-400">memory</span> tool.
-              </SectionFooter>
             </>
           )}
         </div>

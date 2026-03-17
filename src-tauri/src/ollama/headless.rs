@@ -11,7 +11,6 @@ use crate::memory::{
 };
 use crate::phone::{execute_tool, get_installed_apps};
 use crate::loadskills::{build_skills_prompt, load_tool_schemas};
-use crate::web_search::web_search;
 
 use super::ollama_client;
 use super::types::{
@@ -206,34 +205,6 @@ pub async fn run_headless(
                 } else {
                     run_memory_command(app, cmd, path, content, mode, query)
                 }
-            } else if tool_name == "web_search" {
-                let query = tool_args.get("query").and_then(Value::as_str).unwrap_or("");
-                if query.is_empty() {
-                    "error: missing 'query' argument".to_string()
-                } else {
-                    let max = tool_args.get("max_results").and_then(Value::as_u64).unwrap_or(5) as usize;
-                    web_search(query, max.clamp(1, 10)).await
-                }
-            } else if tool_name == "device_status" {
-                let device_id = tool_args.get("device_id").and_then(Value::as_str).unwrap_or("");
-                let cfg = crate::session::store::bootstrap(app);
-                let online = if device_id.is_empty() || device_id == cfg.device.device_id {
-                    "online: this device"
-                } else {
-                    let peer = cfg.paired_devices.iter().find(|p| p.device_id == device_id);
-                    match peer {
-                        Some(p) => {
-                            // Try to ping the peer
-                            if crate::bridge::health::check_peer(&p.address, &cfg.hash_key).await {
-                                "online"
-                            } else {
-                                "offline"
-                            }
-                        },
-                        None => "error: device not found",
-                    }
-                };
-                format!("device_status: {online}")
             } else {
                 execute_tool(app, tool_name, tool_args).await.output
             };
